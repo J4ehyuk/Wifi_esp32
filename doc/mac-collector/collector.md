@@ -55,13 +55,14 @@ JSONL 1줄(레코드) 주요 필드:
 
 - `received_at_unix_us`
 - `session_id` (yaml SSOT), `firmware_session_id` (패킷, 0), `device_id`, `seq`, `timestamp_us`
+- `tx_seq` — v2 패킷의 TX ESP-NOW 카운터 (cross-RX 동기화 키, 비 ESP-NOW 프레임이면 `null`)
 - `channel`, `rssi_dbm`, `noise_floor_dbm`
 - `sample_count`, `csi_amp`
 
 ## 제공 기능 (MVP)
 
-- 패킷 검증 (`magic` / `version` / `header_len` / `payload_type` / 길이)
-- `device_id`별 `seq` 누락 추정
+- 패킷 검증 (`magic` / `version`(1·2) / `header_len` / `payload_type` / 길이)
+- `device_id`별 `seq` 누락 추정 + 구간 Hz + `tx_seq` 유효 비율 출력
 - 주기적 상태 로그 (패킷 수, drop 추정, 샘플 수)
 - 기대 RX 대비 `missing_devices`, `stale_devices`
 - **`--duration-sec N`**: N초 후 자동 종료 (`meshsense_cli` 수집기 메뉴에서도 시간 입력)

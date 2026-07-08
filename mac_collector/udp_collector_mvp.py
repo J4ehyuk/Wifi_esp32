@@ -16,11 +16,14 @@ DEFAULT_SESSION_META = Path(__file__).resolve().parent / "session_meta.yaml"
 
 # 전송 스키마 상수:
 # ESP 송신 코드의 헤더 정의와 "완전히 동일"해야 파싱이 맞습니다.
+# v1: 마지막 4바이트 = crc32(항상 0)
+# v2: 마지막 4바이트 = tx_seq (TX ESP-NOW 카운터, flags bit0=유효) — 레이아웃 동일
 MAGIC = 0x4353
-VERSION = 1
+SUPPORTED_VERSIONS = (1, 2)
 HEADER_LEN = 40
 PAYLOAD_TYPE_CSI_AMP = 1
 NOISE_FLOOR_UNKNOWN = -128
+FLAG_TX_SEQ_VALID = 0x01
 
 # little-endian
 HEADER_STRUCT = struct.Struct("<HBBBBHIIIQbbbBHHI")
@@ -44,7 +47,11 @@ class PacketHeader:
     reserved1: int
     sample_count: int
     reserved2: int
-    crc32: int
+    tx_seq: int  # v1에서는 crc32 자리(항상 0), v2에서는 TX ESP-NOW 카운터
+
+    @property
+    def tx_seq_valid(self) -> bool:
+        return self.version >= 2 and bool(self.flags & FLAG_TX_SEQ_VALID)
 
 
 class DeviceStats:
@@ -52,8 +59,12 @@ class DeviceStats:
         self.packets = 0
         self.samples = 0
         self.dropped_packets = 0
+        self.tx_seq_packets = 0  # tx_seq 유효(v2 flags bit0) 패킷 수
+        self.last_tx_seq: Optional[int] = None
         self.last_seq: Optional[int] = None
         self.last_seen_unix_us: Optional[int] = None
+        # 구간 Hz 계산용 (직전 stats 출력 시점의 packets)
+        self.prev_packets = 0
 
     def update_seq(self, seq: int) -> None:
         # 장치별 seq 공백으로 유실 패킷 수를 추정합니다.
@@ -84,7 +95,7 @@ def validate_packet(header: PacketHeader, packet_len: int) -> Tuple[bool, str]:
     # 손상된 패킷을 디스크 저장 전에 빠르게 제거합니다.
     if header.magic != MAGIC:
         return False, "invalid_magic"
-    if header.version != VERSION:
+    if header.version not in SUPPORTED_VERSIONS:
         return False, "invalid_version"
     if header.header_len != HEADER_LEN:
         return False, "invalid_header_len"
@@ -137,6 +148,7 @@ def build_record(
         "firmware_session_id": header.session_id,
         "device_id": header.device_id,
         "seq": header.seq,
+        "tx_seq": header.tx_seq if header.tx_seq_valid else None,
         "timestamp_us": header.timestamp_us,
         "channel": header.channel,
         "rssi_dbm": header.rssi_dbm,
@@ -156,19 +168,27 @@ def open_device_file(base_dir: Path, session_id: int, device_id: int):
     return out_path.open("a", encoding="utf-8")
 
 
-def print_stats(stats: Dict[int, DeviceStats], invalid_packets: int) -> None:
+def print_stats(stats: Dict[int, DeviceStats], invalid_packets: int, interval_sec: float = 0.0) -> None:
     print("\n[collector] current stats")
     print(f"- invalid_packets: {invalid_packets}")
     if not stats:
         print("- no valid packets yet")
         return
 
-    for device_id, st in stats.items():
+    for device_id, st in sorted(stats.items()):
         total_expected = st.packets + st.dropped_packets
         drop_rate = (st.dropped_packets / total_expected * 100.0) if total_expected > 0 else 0.0
+        hz = ((st.packets - st.prev_packets) / interval_sec) if interval_sec > 0 else 0.0
+        st.prev_packets = st.packets
+        tx_seq_rate = (st.tx_seq_packets / st.packets * 100.0) if st.packets > 0 else 0.0
+        tx_seq_info = (
+            f"tx_seq={tx_seq_rate:.0f}% (last={st.last_tx_seq})"
+            if st.tx_seq_packets > 0
+            else "tx_seq=none(v1?)"
+        )
         print(
-            f"- device={device_id} packets={st.packets} dropped={st.dropped_packets} "
-            f"drop_rate={drop_rate:.2f}% samples={st.samples}"
+            f"- device={device_id} packets={st.packets} hz={hz:.1f} dropped={st.dropped_packets} "
+            f"drop_rate={drop_rate:.2f}% {tx_seq_info} samples={st.samples}"
         )
 
 
@@ -281,7 +301,7 @@ def run_collector(
 
         now = time.time()
         if now - last_print >= print_every_sec:
-            print_stats(stats, invalid_packets)
+            print_stats(stats, invalid_packets, interval_sec=now - last_print)
             print_expected_health(expected_device_ids, stats, now_us(), stale_sec)
             last_print = now
 
@@ -331,8 +351,11 @@ def run_collector(
         st.packets += 1
         st.samples += header.sample_count
         st.last_seen_unix_us = recv_unix_us
+        if header.tx_seq_valid:
+            st.tx_seq_packets += 1
+            st.last_tx_seq = header.tx_seq
 
-    print_stats(stats, invalid_packets)
+    print_stats(stats, invalid_packets, interval_sec=time.time() - last_print)
     print_expected_health(expected_device_ids, stats, now_us(), stale_sec)
     for f in device_files.values():
         try:

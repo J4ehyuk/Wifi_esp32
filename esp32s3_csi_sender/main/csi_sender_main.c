@@ -36,10 +36,17 @@
 #endif
 
 #define MAGIC_CS                0x4353
-#define SCHEMA_VERSION          1
+#define SCHEMA_VERSION          2      /* v2: crc32 자리를 tx_seq로 전용 (레이아웃 동일 40B) */
 #define HEADER_LEN              40
 #define PAYLOAD_TYPE_CSI_AMP    1
 #define NOISE_FLOOR_UNKNOWN     (-128)
+#define CSI_FLAG_TX_SEQ_VALID   0x01   /* flags bit0: tx_seq가 ESP-NOW 프레임에서 추출됨 */
+
+/* ESP-NOW vendor action frame body:
+ * category(1)=0x7f, OUI(3)=18:fe:34, random(4), element(1)=0xdd, len(1),
+ * OUI(3), type(1)=4, version(1) → 사용자 데이터는 offset 15부터.
+ * TX(tx_ap_main.c)는 uint32_t g_enow_seq를 페이로드 맨 앞에 실어 보낸다. */
+#define ESPNOW_TX_SEQ_OFFSET    15
 
 #define MAX_AMP_SAMPLES         64
 #define CSI_BUFFER_MAX_BYTES    512
@@ -51,6 +58,8 @@ typedef struct {
     uint16_t raw_len;
     uint8_t channel;
     int8_t rssi;
+    uint32_t tx_seq;      /* ESP-NOW 프레임에서 추출한 TX 송신 카운터 (cross-RX 동기화 키) */
+    bool tx_seq_valid;
     int8_t raw[CSI_RAW_MAX_BYTES];
 } csi_raw_item_t;
 
@@ -72,8 +81,8 @@ typedef struct {
     uint8_t reserved1;
     uint16_t sample_count;
     uint16_t reserved2;
-    uint32_t crc32;
-} csi_udp_header_v1_t;
+    uint32_t tx_seq;      /* v1: crc32(항상 0) — v2: TX ESP-NOW 카운터 (flags bit0=유효) */
+} csi_udp_header_t;
 #pragma pack(pop)
 
 static const char *TAG = "CSI_SENDER";
@@ -88,8 +97,27 @@ static volatile uint32_t g_csi_cb_count = 0;
 static volatile uint32_t g_csi_throttle_drop = 0;
 static volatile uint32_t g_csi_sent = 0;
 static volatile uint32_t g_csi_filter_drop = 0;
+static volatile uint32_t g_csi_espnow = 0;      /* tx_seq 추출 성공한 콜백 수 */
+static volatile uint32_t g_csi_sent_espnow = 0; /* tx_seq 유효 상태로 전송된 패킷 수 */
 static uint8_t g_ap_bssid[6] = {0};
 static bool g_ap_bssid_set = false;
+
+/* ESP-NOW vendor action frame 판별 후 payload에서 TX 카운터 추출.
+ * 비콘·UDP data 프레임 등 다른 CSI 유발 프레임은 서명 불일치로 걸러진다. */
+static bool extract_espnow_tx_seq(const uint8_t *payload, uint16_t payload_len, uint32_t *out)
+{
+    if (!payload || payload_len < ESPNOW_TX_SEQ_OFFSET + 4) {
+        return false;
+    }
+    if (payload[0] != 0x7f) { /* vendor-specific action category */
+        return false;
+    }
+    if (payload[1] != 0x18 || payload[2] != 0xfe || payload[3] != 0x34) { /* Espressif OUI */
+        return false;
+    }
+    memcpy(out, payload + ESPNOW_TX_SEQ_OFFSET, sizeof(uint32_t));
+    return true;
+}
 
 static float to_amplitude(const int8_t i, const int8_t q)
 {
@@ -199,17 +227,17 @@ static void send_csi_from_raw(const csi_raw_item_t *item)
 
     uint8_t buffer[CSI_BUFFER_MAX_BYTES];
     size_t payload_bytes = count * sizeof(float);
-    size_t total_len = sizeof(csi_udp_header_v1_t) + payload_bytes;
+    size_t total_len = sizeof(csi_udp_header_t) + payload_bytes;
     if (total_len > sizeof(buffer)) {
         return;
     }
 
-    csi_udp_header_v1_t hdr = {0};
+    csi_udp_header_t hdr = {0};
     hdr.magic = MAGIC_CS;
     hdr.version = SCHEMA_VERSION;
     hdr.header_len = HEADER_LEN;
     hdr.payload_type = PAYLOAD_TYPE_CSI_AMP;
-    hdr.flags = 0;
+    hdr.flags = item->tx_seq_valid ? CSI_FLAG_TX_SEQ_VALID : 0;
     hdr.session_id = 0;
     hdr.device_id = g_runtime_device_id;
     hdr.seq = g_seq++;
@@ -218,7 +246,10 @@ static void send_csi_from_raw(const csi_raw_item_t *item)
     hdr.rssi_dbm = item->rssi;
     hdr.noise_floor_dbm = NOISE_FLOOR_UNKNOWN;
     hdr.sample_count = (uint16_t)count;
-    hdr.crc32 = 0;
+    hdr.tx_seq = item->tx_seq_valid ? item->tx_seq : 0;
+    if (item->tx_seq_valid) {
+        g_csi_sent_espnow++;
+    }
 
     memcpy(buffer, &hdr, sizeof(hdr));
     memcpy(buffer + sizeof(hdr), amp_ma, payload_bytes);
@@ -267,6 +298,10 @@ static void wifi_csi_cb(void *ctx, wifi_csi_info_t *info)
     memcpy(item.raw, info->buf, item.raw_len);
     item.channel = info->rx_ctrl.channel;
     item.rssi = info->rx_ctrl.rssi;
+    item.tx_seq_valid = extract_espnow_tx_seq(info->payload, info->payload_len, &item.tx_seq);
+    if (item.tx_seq_valid) {
+        g_csi_espnow++;
+    }
 
     if (xQueueSend(g_csi_queue, &item, 0) != pdTRUE) {
         g_csi_queue_drop++;
@@ -380,19 +415,25 @@ void app_main(void)
     init_udp_sender();
     init_csi_pipeline();
 
-    uint32_t prev_cb = 0, prev_sent = 0;
+    uint32_t prev_cb = 0, prev_sent = 0, prev_espnow = 0, prev_sent_espnow = 0;
     while (1) {
         vTaskDelay(pdMS_TO_TICKS(5000));
         uint32_t cb = g_csi_cb_count;
         uint32_t sent = g_csi_sent;
+        uint32_t espnow = g_csi_espnow;
+        uint32_t sent_espnow = g_csi_sent_espnow;
         uint32_t throttle = g_csi_throttle_drop;
         uint32_t qdrop = g_csi_queue_drop;
         ESP_LOGI(TAG,
-                 "5s: cb=%" PRIu32 " (+%" PRIu32 ", %.1fHz) sent=%" PRIu32 " (+%" PRIu32 ", %.1fHz) throttle_drop=%" PRIu32 " filter_drop=%" PRIu32 " qdrop=%" PRIu32,
+                 "5s: cb=%" PRIu32 " (+%" PRIu32 ", %.1fHz) espnow=+%" PRIu32 " sent=%" PRIu32 " (+%" PRIu32 ", %.1fHz, espnow +%" PRIu32 ") throttle_drop=%" PRIu32 " filter_drop=%" PRIu32 " qdrop=%" PRIu32,
                  cb, cb - prev_cb, (cb - prev_cb) / 5.0f,
+                 espnow - prev_espnow,
                  sent, sent - prev_sent, (sent - prev_sent) / 5.0f,
+                 sent_espnow - prev_sent_espnow,
                  throttle, g_csi_filter_drop, qdrop);
         prev_cb = cb;
         prev_sent = sent;
+        prev_espnow = espnow;
+        prev_sent_espnow = sent_espnow;
     }
 }

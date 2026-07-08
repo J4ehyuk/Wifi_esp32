@@ -25,7 +25,7 @@ Post-processing (add/)
  └─ JSONL 로드 → 64→52 매핑(선택) → 100Hz 보간 → 슬라이딩 윈도우 → (N, 3, 52, 200) 텐서
 ```
 
-**UDP 패킷 프로토콜:** little-endian 40바이트 헤더 (`magic=0x4353`, `version=1`, `payload_type=1`) + `float32 csi_amp[sample_count]`. 상세: `doc/mac-collector/udp-packet-schema.md`.
+**UDP 패킷 프로토콜:** little-endian 40바이트 헤더 (`magic=0x4353`, `version=2`(v1 하위호환), `payload_type=1`, v2 `tx_seq`=cross-RX 동기화 키) + `float32 csi_amp[sample_count]`. 상세: `doc/mac-collector/udp-packet-schema.md`.
 
 **데이터 저장 경로:** `mac_collector_output/raw/YYYYMMDD/session_<id>/device_<id>.jsonl` (git 제외)
 
