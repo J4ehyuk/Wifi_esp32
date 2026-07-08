@@ -2,8 +2,13 @@
 """
 MeshSense 터미널 가이드 CLI — 플래시·수집기를 메뉴로 실행.
 
+첫 화면에서 수집 파이프라인을 선택한다:
+  · USB 수집 — 모델 학습 데이터 (esp-csi PoC, USB 시리얼)
+  · AP 실시간 수집 — SoftAP + UDP
+
   python scripts/meshsense_cli.py
-  python scripts/meshsense_cli.py --quick   # 가이드 없이 메인 메뉴만
+  python scripts/meshsense_cli.py --quick   # 안내 문구 없이 메뉴만
+  python scripts/meshsense_cli.py --guide   # AP 파이프라인 전체 가이드 바로 시작
 """
 
 from __future__ import annotations
@@ -590,7 +595,7 @@ def _flash_board(*, kind: Optional[BoardKind] = None) -> bool:
     print(f"  {_describe_board(mac)}")
     resolved = kind or _resolve_board_kind(mac)
     if resolved is None:
-        print("\n[안내] registry에 없습니다. 메인 메뉴 [3] 보드 관리 → 등록 후 다시 플래시하세요.")
+        print("\n[안내] registry에 없습니다. 보드 관리 메뉴 → 등록 후 다시 플래시하세요.")
         if _ask_yes_no("지금 보드 관리(등록)로 이동할까요?", default_no=False):
             _menu_board_management()
         return False
@@ -870,7 +875,7 @@ def _flash_poc_board(*, kind: Optional[BoardKind] = None) -> bool:
     print(f"  {_describe_board(mac)}")
     resolved = kind or _resolve_board_kind(mac)
     if resolved is None:
-        print("\n[안내] registry에 없습니다. 메인 메뉴 [3] 보드 관리에서 등록하세요.")
+        print("\n[안내] registry에 없습니다. 보드 관리 메뉴에서 등록하세요.")
         return False
 
     project = SEND_POC_PROJECT if resolved == "tx" else RECV_POC_PROJECT
@@ -891,7 +896,7 @@ def _flash_poc_board(*, kind: Optional[BoardKind] = None) -> bool:
         do_monitor = _ask_yes_no("플래시 후 시리얼 모니터를 열까요? (TX 부팅 로그 확인용)", default_no=False)
     else:
         print("\n  [주의] RX는 monitor를 열지 마세요 — 바이너리 스트림이 깨진 글자로 보이고")
-        print("         메뉴 [10-2] 수집 시 reader가 같은 포트를 점유해야 합니다.")
+        print("         수집(USB 시리얼) 시 reader가 같은 포트를 점유해야 합니다.")
         do_monitor = _ask_yes_no("그래도 monitor를 열까요? (디버그 용도만)", default_no=True)
 
     flash_args = ["idf.py", "-p", port, "flash"]
@@ -912,7 +917,7 @@ def _flash_poc_board(*, kind: Optional[BoardKind] = None) -> bool:
         return False
     print("\n[완료] PoC 플래시 성공")
     if resolved == "rx":
-        print("  → 메뉴 [10-2] 수집으로 데이터 받기 (USB 시리얼)")
+        print("  → USB 수집 파이프라인 메뉴의 '수집 (USB 시리얼)'로 데이터 받기")
     else:
         print("  → TX는 USB 연결만 유지하면 100Hz로 ESP-NOW 송신 시작")
         print("    monitor 띄워두면 부팅 후 'csi_send: wifi_channel: 11, send_frequency: 100' 확인 가능")
@@ -1099,10 +1104,10 @@ def _collect_poc_interactive() -> bool:
     return True
 
 
-def _menu_poc() -> None:
-    """[10] 새로운 버전 — esp-csi 베이스 PoC (USB 시리얼 100Hz 파이프라인)."""
+def _menu_usb_pipeline() -> None:
+    """USB 수집 파이프라인 — esp-csi 베이스 PoC (USB 시리얼 100Hz, 모델 학습 데이터)."""
     while True:
-        print("\n--- [10] 새로운 버전 (esp-csi PoC) ---")
+        print("\n--- USB 수집 파이프라인 (모델 학습 데이터 · esp-csi PoC) ---")
         print(f"  TX 프로젝트: {SEND_POC_PROJECT.name}")
         print(f"  RX 프로젝트: {RECV_POC_PROJECT.name}")
         print(f"  reader:    {SERIAL_READER_SCRIPT.name}")
@@ -1111,7 +1116,8 @@ def _menu_poc() -> None:
             [
                 "보드 플래시 (PoC, MAC 자동 매칭)",
                 "수집 (USB 시리얼, 시간 입력)",
-                "돌아가기",
+                "보드 관리 (registry 등록·검증)",
+                "파이프라인 선택으로 돌아가기",
             ],
         )
         if idx == 0:
@@ -1120,6 +1126,8 @@ def _menu_poc() -> None:
         elif idx == 1:
             _collect_poc_interactive()
             _pause()
+        elif idx == 2:
+            _menu_board_management()
         else:
             break
 
@@ -1341,7 +1349,7 @@ def _guide_full() -> None:
     if _ask_yes_no("수집기를 지금 시작할까요?", default_no=False):
         _run_collector(skip_start_prompt=True, skip_wifi_hint=True)
     else:
-        print("  나중에 메인 메뉴 [4] 수집기 실행 으로 시작할 수 있습니다.")
+        print("  나중에 AP 파이프라인 메뉴의 '수집기 실행'으로 시작할 수 있습니다.")
 
     print("\n" + "=" * 60)
     print("  전체 가이드 종료")
@@ -1351,22 +1359,19 @@ def _guide_full() -> None:
     _pause()
 
 
-def _main_menu(quick: bool) -> None:
+def _menu_ap_pipeline(quick: bool) -> None:
+    """AP 실시간 수집 파이프라인 — SoftAP + UDP (esp32s3_tx_ap_node / esp32s3_csi_sender)."""
     while True:
-        _banner()
+        print("\n--- AP 실시간 수집 파이프라인 (SoftAP + UDP) ---")
         if not quick:
-            print(
-                "\n메인 메뉴\n"
-                "  실험 처음이면 [1] 전체 가이드를 권장합니다."
-            )
+            print("  실험 처음이면 [1] 전체 가이드를 권장합니다.")
         options = [
             "전체 가이드 (설정 → TX → Wi-Fi → RX → 수집)",
             "보드 플래시 (USB · MAC → TX/RX 자동)",
-            "보드 관리 (registry 등록·검증)",
             "수집기 실행",
             "사전 점검",
-            "[NEW] esp-csi PoC (100Hz USB 시리얼 파이프라인)",
-            "종료",
+            "보드 관리 (registry 등록·검증)",
+            "파이프라인 선택으로 돌아가기",
         ]
         idx = _choose("선택", options)
         if idx == 0:
@@ -1374,14 +1379,35 @@ def _main_menu(quick: bool) -> None:
         elif idx == 1:
             _flash_board()
         elif idx == 2:
-            _menu_board_management()
-        elif idx == 3:
             _run_collector()
-        elif idx == 4:
+        elif idx == 3:
             _preflight()
             _pause()
-        elif idx == 5:
-            _menu_poc()
+        elif idx == 4:
+            _menu_board_management()
+        else:
+            break
+
+
+def _main_menu(quick: bool) -> None:
+    """첫 화면 — 수집 파이프라인 선택."""
+    while True:
+        _banner()
+        print(
+            "\n수집 파이프라인을 선택하세요.\n"
+            "  · USB 수집: RX 보드를 USB로 연결해 모델 학습 데이터를 수집 (esp-csi PoC)\n"
+            "  · AP 실시간 수집: TX가 SoftAP를 열고 RX가 UDP로 실시간 전송"
+        )
+        options = [
+            "USB 수집 — 모델 학습 데이터 (esp-csi PoC · USB 시리얼 100Hz)",
+            "AP 실시간 수집 — SoftAP + UDP",
+            "종료",
+        ]
+        idx = _choose("선택", options)
+        if idx == 0:
+            _menu_usb_pipeline()
+        elif idx == 1:
+            _menu_ap_pipeline(quick)
         else:
             print("\n종료합니다.")
             break
