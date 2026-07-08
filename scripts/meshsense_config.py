@@ -25,6 +25,7 @@ class MeshSenseConfig:
     ap_payload_bytes: int
     collector_ip: str
     collector_port: int
+    rx_espnow_only: bool
 
     def rx_cmake_defines(self, device_id: int) -> List[str]:
         return [
@@ -33,6 +34,7 @@ class MeshSenseConfig:
             f"-DCSI_COLLECTOR_IP={self.collector_ip}",
             f"-DCSI_COLLECTOR_PORT={self.collector_port}",
             f"-DCSI_DEVICE_ID={device_id}",
+            f"-DCSI_ESPNOW_ONLY={1 if self.rx_espnow_only else 0}",
         ]
 
     def tx_cmake_defines(self, tx_node_id: int) -> List[str]:
@@ -60,6 +62,9 @@ def _require_mapping(data: Dict[str, Any], key: str, path: str) -> Dict[str, Any
 def _parse_unified(data: Dict[str, Any]) -> MeshSenseConfig:
     ap = _require_mapping(data, "ap", "root")
     collector = _require_mapping(data, "collector", "root")
+    rx = data.get("rx") or {}  # 선택 섹션 (없으면 기본값)
+    if not isinstance(rx, dict):
+        raise ValueError("root.rx must be an object")
 
     def req_str(obj: Dict[str, Any], key: str, prefix: str) -> str:
         if key not in obj:
@@ -83,6 +88,7 @@ def _parse_unified(data: Dict[str, Any]) -> MeshSenseConfig:
         ap_payload_bytes=req_int(ap, "payload_bytes", "ap"),
         collector_ip=req_str(collector, "ip", "collector"),
         collector_port=req_int(collector, "port", "collector"),
+        rx_espnow_only=bool(rx.get("espnow_only", False)),
     )
 
 

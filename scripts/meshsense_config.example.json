@@ -13,5 +13,8 @@
   "collector": {
     "ip": "192.168.4.2",
     "port": 9999
+  },
+  "rx": {
+    "espnow_only": false
   }
 }

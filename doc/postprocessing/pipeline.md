@@ -37,9 +37,15 @@ SESSION_DIR = Path("mac_collector_output/raw/20260513/session_1")
 
 ## 처리 단계
 
-1. **로드** — `SESSION_DIR` 아래 `*.jsonl`을 `device_id`별 버퍼 `(received_at_unix_us, csi_amp)`에 적재
-2. **시간 정렬** — RX별 타임스탬프를 100Hz `t_grid`에 선형 보간 → `aligned` shape `(3, T, 52)`
+1. **로드** — `SESSION_DIR` 아래 `*.jsonl`을 `device_id`별 버퍼 `(received_at_unix_us, csi_amp)`에 적재. `tx_seq`가 있는 레코드(UDP v2)는 별도 버퍼에도 적재
+2. **정렬** (`ALIGN_MODE`, 기본 `"auto"`) → `aligned` shape `(3, T, 52)`
+   - **`tx_seq` 정렬** (모든 RX에 `tx_seq`가 있을 때): TX ESP-NOW 카운터를 공통 축으로 사용.
+     모든 RX가 같은 프레임에 같은 `tx_seq`를 기록하므로 네트워크 지터가 없는 TX 쪽 10ms 클럭이다.
+     공통 구간에 1스텝(=10ms) 격자를 만들고 빈 라운드는 선형 보간. 라운드 커버리지를 RX별로 출력
+   - **`recv_time` 정렬** (v1 데이터 fallback): Mac 수신 시각을 100Hz `t_grid`에 선형 보간
 3. **윈도잉** — `WINDOW`/`STRIDE`로 `(N, 3, 52, 200)` 텐서 `X` 생성 (RX 축 순서: `RX_IDS` 순)
+
+주의: TX 보드가 수집 중 재부팅하면 `tx_seq`가 0부터 다시 시작해 tx_seq 축이 깨집니다 — 그런 세션은 `ALIGN_MODE = "recv_time"`으로 처리하세요.
 
 ## 실행
 

@@ -34,6 +34,9 @@
 #ifndef DEVICE_ID
 #define DEVICE_ID               101
 #endif
+#ifndef CSI_ESPNOW_ONLY
+#define CSI_ESPNOW_ONLY         0      /* 1: ESP-NOW 프레임 CSI만 전송 (비콘·data 프레임 제외) */
+#endif
 
 #define MAGIC_CS                0x4353
 #define SCHEMA_VERSION          2      /* v2: crc32 자리를 tx_seq로 전용 (레이아웃 동일 40B) */
@@ -99,6 +102,7 @@ static volatile uint32_t g_csi_sent = 0;
 static volatile uint32_t g_csi_filter_drop = 0;
 static volatile uint32_t g_csi_espnow = 0;      /* tx_seq 추출 성공한 콜백 수 */
 static volatile uint32_t g_csi_sent_espnow = 0; /* tx_seq 유효 상태로 전송된 패킷 수 */
+static volatile uint32_t g_csi_espnow_only_drop = 0; /* CSI_ESPNOW_ONLY=1로 걸러진 콜백 수 */
 static uint8_t g_ap_bssid[6] = {0};
 static bool g_ap_bssid_set = false;
 
@@ -294,14 +298,22 @@ static void wifi_csi_cb(void *ctx, wifi_csi_info_t *info)
         }
     }
     csi_raw_item_t item = {0};
-    item.raw_len = (uint16_t)(info->len > CSI_RAW_MAX_BYTES ? CSI_RAW_MAX_BYTES : info->len);
-    memcpy(item.raw, info->buf, item.raw_len);
-    item.channel = info->rx_ctrl.channel;
-    item.rssi = info->rx_ctrl.rssi;
     item.tx_seq_valid = extract_espnow_tx_seq(info->payload, info->payload_len, &item.tx_seq);
     if (item.tx_seq_valid) {
         g_csi_espnow++;
     }
+#if CSI_ESPNOW_ONLY
+    /* ESP-NOW 프레임만 전송 — 비콘·heartbeat 등 rate가 다른 프레임의 CSI를 제외해
+     * 데이터 균질성과 tx_seq 커버리지를 확보. raw 복사 전에 걸러 콜백 시간 절약. */
+    if (!item.tx_seq_valid) {
+        g_csi_espnow_only_drop++;
+        return;
+    }
+#endif
+    item.raw_len = (uint16_t)(info->len > CSI_RAW_MAX_BYTES ? CSI_RAW_MAX_BYTES : info->len);
+    memcpy(item.raw, info->buf, item.raw_len);
+    item.channel = info->rx_ctrl.channel;
+    item.rssi = info->rx_ctrl.rssi;
 
     if (xQueueSend(g_csi_queue, &item, 0) != pdTRUE) {
         g_csi_queue_drop++;
@@ -425,12 +437,12 @@ void app_main(void)
         uint32_t throttle = g_csi_throttle_drop;
         uint32_t qdrop = g_csi_queue_drop;
         ESP_LOGI(TAG,
-                 "5s: cb=%" PRIu32 " (+%" PRIu32 ", %.1fHz) espnow=+%" PRIu32 " sent=%" PRIu32 " (+%" PRIu32 ", %.1fHz, espnow +%" PRIu32 ") throttle_drop=%" PRIu32 " filter_drop=%" PRIu32 " qdrop=%" PRIu32,
+                 "5s: cb=%" PRIu32 " (+%" PRIu32 ", %.1fHz) espnow=+%" PRIu32 " sent=%" PRIu32 " (+%" PRIu32 ", %.1fHz, espnow +%" PRIu32 ") throttle_drop=%" PRIu32 " filter_drop=%" PRIu32 " eo_drop=%" PRIu32 " qdrop=%" PRIu32,
                  cb, cb - prev_cb, (cb - prev_cb) / 5.0f,
                  espnow - prev_espnow,
                  sent, sent - prev_sent, (sent - prev_sent) / 5.0f,
                  sent_espnow - prev_sent_espnow,
-                 throttle, g_csi_filter_drop, qdrop);
+                 throttle, g_csi_filter_drop, g_csi_espnow_only_drop, qdrop);
         prev_cb = cb;
         prev_sent = sent;
         prev_espnow = espnow;

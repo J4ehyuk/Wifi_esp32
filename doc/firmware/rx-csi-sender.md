@@ -56,6 +56,15 @@ idf.py -p /dev/tty.usbmodemXXXX flash monitor
 - STA `WIFI_PS_NONE`, `listen_interval=1`.
 - TX **ESP-NOW 10ms** (`espnow_interval_ms`) + 비콘 **100 TU** (`beacon_interval_tu`).
 
+## tx_seq (UDP v2) · ESP-NOW 전용 필터
+
+- CSI 콜백이 ESP-NOW 프레임(payload 서명 category `0x7f` + OUI `18:fe:34`)에서 TX 카운터를
+  추출해 UDP 헤더 `tx_seq`에 실어 보냄 (flags bit0=유효). cross-RX 동기화 키 —
+  [udp-packet-schema.md](../mac-collector/udp-packet-schema.md) 참고.
+- `meshsense_config.json` `rx.espnow_only=true` (CMake `CSI_ESPNOW_ONLY=1`)이면 ESP-NOW 프레임
+  CSI만 전송 — 비콘·heartbeat 등 rate가 다른 프레임을 제외해 데이터 균질성·tx_seq 커버리지 확보.
+  걸러진 수는 5초 로그 `eo_drop`으로 확인.
+
 Hz 확인: `python scripts/measure_csi_hz.py mac_collector_output/raw/.../session_<id>`
 
 ## 트러블슈팅
