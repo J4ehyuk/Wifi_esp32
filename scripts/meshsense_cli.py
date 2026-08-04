@@ -15,7 +15,6 @@ from __future__ import annotations
 
 import argparse
 import glob
-import re
 import subprocess
 import sys
 from pathlib import Path
@@ -53,6 +52,8 @@ POC_LOG_DIR = REPO_ROOT / "log"  # .gitignore 처리됨
 BoardKind = Literal["tx", "rx"]
 
 sys.path.insert(0, str(SCRIPT_DIR))
+
+from session_meta import read_session_id  # noqa: E402
 
 
 def _pause(msg: str = "계속하려면 Enter…") -> None:
@@ -924,17 +925,6 @@ def _flash_poc_board(*, kind: Optional[BoardKind] = None) -> bool:
     return True
 
 
-def _read_session_id_from_yaml() -> int:
-    if not SESSION_META.is_file():
-        return 1
-    try:
-        text = SESSION_META.read_text(encoding="utf-8")
-    except OSError:
-        return 1
-    m = re.search(r"^session_id:\s*(\d+)\s*$", text, re.MULTILINE)
-    return int(m.group(1)) if m else 1
-
-
 def _detect_rx_boards() -> List[Tuple[str, int]]:
     """현재 USB 포트들에서 MAC 읽고 RX registry와 매칭된 (port, device_id) 만 반환."""
     from registry import lookup_by_mac  # noqa: WPS433
@@ -1001,7 +991,7 @@ def _collect_poc_interactive() -> bool:
         print("  ② mac_collector/device_registry.csv 에 등록되어 있는지 확인")
         return False
 
-    session_id = _read_session_id_from_yaml()
+    session_id = read_session_id(SESSION_META, default=1)
     print(f"\n  session_id = {session_id} (session_meta.yaml)")
 
     duration_sec = _ask_collect_duration_sec()
@@ -1230,16 +1220,9 @@ def _run_collector(*, skip_start_prompt: bool = False, skip_wifi_hint: bool = Fa
             f"  수집기 IP: {cfg.collector_ip} "
             f"(확인: ipconfig getifaddr en0)"
         )
-    session_id = 1
+    session_id = read_session_id(SESSION_META, default=1)
     if SESSION_META.is_file():
-        try:
-            text = SESSION_META.read_text(encoding="utf-8")
-            m = re.search(r"^session_id:\s*(\d+)\s*$", text, re.MULTILINE)
-            if m:
-                session_id = int(m.group(1))
-                print(f"  이번 run session_id (yaml): {session_id}")
-        except OSError:
-            pass
+        print(f"  이번 run session_id (yaml): {session_id}")
 
     if not skip_start_prompt and not _ask_yes_no(
         "수집기를 지금 시작할까요?",

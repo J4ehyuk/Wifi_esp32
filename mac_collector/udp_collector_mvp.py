@@ -1,6 +1,5 @@
 import argparse
 import json
-import re
 import sys
 import shutil
 import signal
@@ -10,6 +9,13 @@ import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Dict, List, Optional, Set, Tuple
+
+# 호스트 공용 모듈은 scripts/에 있다 (TODO: 패키지화되면 sys.path 조작 제거)
+_SCRIPTS_DIR = Path(__file__).resolve().parent.parent / "scripts"
+if str(_SCRIPTS_DIR) not in sys.path:
+    sys.path.insert(0, str(_SCRIPTS_DIR))
+from registry import load_device_ids  # noqa: E402
+from session_meta import read_session_id  # noqa: E402
 
 DEFAULT_SESSION_META = Path(__file__).resolve().parent / "session_meta.yaml"
 
@@ -22,7 +28,6 @@ MAGIC = 0x4353
 SUPPORTED_VERSIONS = (1, 2)
 HEADER_LEN = 40
 PAYLOAD_TYPE_CSI_AMP = 1
-NOISE_FLOOR_UNKNOWN = -128
 FLAG_TX_SEQ_VALID = 0x01
 
 # little-endian
@@ -117,21 +122,6 @@ def parse_payload(packet: bytes, header: PacketHeader) -> List[float]:
     return list(struct.unpack_from(fmt, packet, header.header_len))
 
 
-def load_session_id_from_meta(path: Path) -> int:
-    """session_meta.yaml 루트 session_id — run 구분 SSOT (Mac)."""
-    if not path.exists():
-        raise FileNotFoundError(f"session meta not found: {path}")
-    text = path.read_text(encoding="utf-8")
-    for line in text.splitlines():
-        stripped = line.strip()
-        if not stripped or stripped.startswith("#"):
-            continue
-        match = re.match(r"^session_id:\s*(\d+)\s*$", stripped)
-        if match:
-            return int(match.group(1))
-    raise ValueError(f"session_id not found in {path}")
-
-
 def build_record(
     header: PacketHeader,
     amp: List[float],
@@ -201,15 +191,6 @@ def parse_expected_device_ids(raw: str) -> Set[int]:
         if token:
             out.add(int(token))
     return out
-
-
-def load_device_ids_from_registry(path: Path) -> Set[int]:
-    scripts_dir = Path(__file__).resolve().parent.parent / "scripts"
-    if str(scripts_dir) not in sys.path:
-        sys.path.insert(0, str(scripts_dir))
-    from registry import load_device_ids  # noqa: WPS433
-
-    return load_device_ids(path)
 
 
 def maybe_copy_session_meta(session_meta: Optional[Path], output_dir: Path, session_id: int) -> None:
@@ -416,11 +397,11 @@ def main() -> None:
     args = parser.parse_args()
 
     args.output_dir.mkdir(parents=True, exist_ok=True)
-    run_session_id = load_session_id_from_meta(args.session_meta)
+    run_session_id = read_session_id(args.session_meta)
     expected_device_ids = parse_expected_device_ids(args.expected_device_ids)
     if not expected_device_ids:
         # fallback: CLI 입력이 없으면 등록표에서 expected device 목록을 자동 추정
-        expected_device_ids = load_device_ids_from_registry(args.device_registry_csv)
+        expected_device_ids = load_device_ids(args.device_registry_csv)
         if expected_device_ids:
             print(
                 f"[collector] loaded expected device IDs from registry "

@@ -18,6 +18,8 @@ from typing import Dict, List, Optional, Tuple
 
 import numpy as np
 
+from session_meta import read_session_id
+
 F_S = 100  # Hz — 펌웨어/RX 전송 주기와 동일
 MAX_DISPLAY_ROWS = 4000  # PNG 가독성·용량용 시간축 다운샘플 상한
 DEFAULT_OUT_NAME = "csi_waterfall.png"
@@ -203,18 +205,6 @@ def find_latest_session_dir(output_base: Path, session_id: int) -> Optional[Path
     return max(candidates, key=lambda p: p.stat().st_mtime)
 
 
-def load_session_id_from_meta(path: Path) -> int:
-    text = path.read_text(encoding="utf-8")
-    for line in text.splitlines():
-        stripped = line.strip()
-        if not stripped or stripped.startswith("#"):
-            continue
-        m = re.match(r"^session_id:\s*(\d+)\s*$", stripped)
-        if m:
-            return int(m.group(1))
-    raise ValueError(f"session_id not found in {path}")
-
-
 def main() -> int:
     parser = argparse.ArgumentParser(description="CSI JSONL → 워터폴 PNG (RX별 서브플롯 1장)")
     parser.add_argument(
@@ -260,7 +250,7 @@ def main() -> int:
         session_id = args.session_id
         if session_id is None:
             meta = args.session_meta or (Path(__file__).resolve().parent.parent / "mac_collector" / "session_meta.yaml")
-            session_id = load_session_id_from_meta(meta)
+            session_id = read_session_id(meta)
         found = find_latest_session_dir(args.output_dir.resolve(), session_id)
         if found is None:
             print(f"error: session_{session_id} 폴더 없음 under {args.output_dir}", file=sys.stderr)

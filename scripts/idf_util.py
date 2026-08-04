@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import List, Optional
+from typing import List
 
 from idf_env import run_in_idf_shell
 from idf_paths import REPO_ROOT

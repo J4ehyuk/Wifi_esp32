@@ -9,11 +9,9 @@
 from __future__ import annotations
 
 import argparse
-import os
 import subprocess
 import sys
 from pathlib import Path
-from typing import Optional
 
 # ESP-IDF v5.2.2 requirements checker ↔ 최신 ruamel.yaml metadata 불일치 완화
 RUAMEL_YAML_PIN = "ruamel.yaml==0.17.21"

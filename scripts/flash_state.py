@@ -67,10 +67,6 @@ def is_flashed(kind: FlashKind, node_id: int, path: Path = DEFAULT_FLASH_STATE_P
     return int(node_id) in _flashed_set(state, kind)
 
 
-def flash_label(kind: FlashKind, node_id: int, path: Path = DEFAULT_FLASH_STATE_PATH) -> str:
-    return "플래시됨" if is_flashed(kind, node_id, path) else "미플래시"
-
-
 def flash_symbol(kind: FlashKind, node_id: int, path: Path = DEFAULT_FLASH_STATE_PATH) -> str:
     return "●" if is_flashed(kind, node_id, path) else "○"
 
