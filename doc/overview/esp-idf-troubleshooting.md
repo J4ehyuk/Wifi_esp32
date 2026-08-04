@@ -32,7 +32,7 @@ Mac·Python 설치 방식이 달라도 동일하게 동작하도록 `scripts/idf
 git clone --recursive <repo>
 cd Wifi_esp32
 python3 scripts/idf_bootstrap.py -y    # meshsense_cli 플래시 전 1회
-python3 scripts/meshsense_cli.py       # [5] 사전 점검 → ESP-IDF OK 확인 후 [2] 플래시
+python3 scripts/meshsense_cli.py       # [2] AP 실시간 수집 → [4] 사전 점검 → OK 확인 후 [2] 보드 플래시
 ```
 
 `python` 이 없으면 `python3` 를 사용하세요. meshsense_cli 가 호출하는 플래시·bootstrap 은 동일한 `idf_env` 를 씁니다.
@@ -175,7 +175,7 @@ MeshSense CLI 버그가 아니라 **네트워크 차단** (Cursor 샌드박스, 
 
 ```text
 python3 scripts/meshsense_cli.py
-→ [2] 플래시 (MAC → registry 자동 분기) 또는 [3] 보드 관리
+→ [2] AP 실시간 수집 → [2] 보드 플래시 (MAC → registry 자동 분기) 또는 [5] 보드 관리
 ```
 
 registry·`meshsense_config.json`이 맞으면 빌드 시 CMake에 AP/수집기/device_id가 주입됩니다.  

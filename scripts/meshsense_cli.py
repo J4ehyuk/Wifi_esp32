@@ -43,7 +43,7 @@ VENV_DIR = REPO_ROOT / ".venv"
 VENV_PYTHON = VENV_DIR / "bin" / "python"
 VIZ_REQUIREMENTS = REPO_ROOT / "requirements-viz.txt"
 
-# 새 버전 (esp-csi 베이스 PoC) — doc/firmware/csi-poc.md 참고
+# USB 수집 파이프라인 (esp-csi 베이스) — doc/pipeline/usb-collection.md 참고
 SEND_POC_PROJECT = REPO_ROOT / "esp32s3_csi_send_poc"
 RECV_POC_PROJECT = REPO_ROOT / "esp32s3_csi_recv_poc"
 SERIAL_READER_SCRIPT = SCRIPT_DIR / "csi_serial_reader.py"

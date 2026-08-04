@@ -1,11 +1,17 @@
 # LSTM 설계 문서
 
-## 1. 현재 전처리 결과
+구현: [`model_train/model/LSTM.py`](../../model_train/model/LSTM.py) ·
+전처리: [pipeline.md](pipeline.md)
 
-`Preprocessing.py`에서 최종적으로 만드는 입력은 다음 형태이다.
+> 이 문서의 shape 예시는 **RX 3대(feature 156)** 기준이다.
+> feature 수는 `RX수 × 52`로 결정되며(RX 1대면 52), 코드는 `X.shape[2]`에서 자동 파생한다.
+
+## 1. 전처리 결과 (모델 입력)
+
+`Preprocessing.run_preprocessing()`이 만드는 입력은 다음 형태이다.
 
 ```python
-X.shape == (N, 300, 156)
+X.shape == (N, 300, RX수 * 52)   # 예: RX 3대면 (N, 300, 156)
 y.shape == (N,)
 ```
 
@@ -14,7 +20,7 @@ y.shape == (N,)
 ```text
 N   = 윈도우 개수
 300 = 시간 길이, 3초 * 100Hz
-156 = feature 개수, RX 3개 * 서브캐리어 52개
+feature = RX 개수 * 서브캐리어 52개
 ```
 
 즉, 윈도우 하나는 다음 형태이다.
@@ -41,31 +47,17 @@ y[0] = 0 또는 1 또는 2
 
 현재 데이터 수집 방식에서는 세션 하나가 5분 단위로 측정되고, 하나의 세션은 하나의 클래스에 대한 데이터만 담는다.
 
-예를 들어 `dataset/20260513/session_1`의 `session_meta_snapshot.yaml`에 다음처럼 적혀 있다면:
-
-```yaml
-experiment:
-  label_target: "empty"
-  split_strategy: "train"
-```
-
-이 세션은 다음 의미이다.
-
-```text
-dataset/20260513/session_1
-  empty 상태
-  class 0
-  train split
-  5분 측정 데이터
-```
-
-따라서 이 세션에서 만든 모든 window의 라벨은 같은 값이 된다.
+예를 들어 `mac_collector_output/raw/20260616/session_21`을 empty 상태에서 측정했다면,
+이 세션에서 만든 모든 window의 라벨은 같은 값이 된다.
 
 ```python
-y = np.full(len(windows), 0, dtype=np.int64)
+y = np.full(len(windows), 0, dtype=np.int64)   # empty = class 0
 ```
 
-위 코드는 현재 세션이 empty, 즉 class 0일 때 모든 window를 class 0으로 두는 설정이다.
+**현재 라벨 지정 방식**: 세션 라벨은 `Preprocessing.py`의 `--label empty|static|action`
+CLI 인자(또는 `run_preprocessing(label_name=...)`)로 사람이 직접 지정한다.
+`session_meta_snapshot.yaml`에서 자동으로 읽는 방식은 §14의 개선 항목이다
+(현재 snapshot들의 `label_target` 값 체계가 3-class와 달라 정비가 선행되어야 함).
 
 `CrossEntropyLoss`를 사용할 것이므로 `y`는 one-hot 벡터가 아니라 정수 클래스 번호여야 한다.
 
@@ -136,18 +128,16 @@ batch_y.shape == (32,)
 
 ---
 
-## 4. 권장 모델 구조
-
-처음에는 단순한 구조로 시작하는 것이 좋다.
+## 4. 모델 구조 (현행)
 
 ```text
 입력 X
   shape: (batch, 300, 156)
 
 LSTM
-  input_size: 156
+  input_size: X.shape[2] (예: 156)
   hidden_size: 128
-  num_layers: 1
+  num_layers: 2
   batch_first: True
 
 마지막 time step 출력 선택
@@ -221,19 +211,17 @@ last = lstm_out[:, -1, :]
 
 ---
 
-## 6. 초기 하이퍼파라미터
-
-처음에는 다음 설정으로 시작한다.
+## 6. 초기 하이퍼파라미터 (현행 `LSTM.py` 기본값)
 
 ```text
-input_size   = 156
+input_size   = X.shape[2] 자동 파생
 hidden_size  = 128
-num_layers   = 1
+num_layers   = 2
 num_classes  = 3
 dropout      = 0.2
 batch_size   = 32
 learning_rate = 0.001
-epochs       = 20
+epochs       = 20  (--epochs 로 변경 가능)
 ```
 
 이 설정은 너무 크지 않아서 먼저 코드 동작과 데이터 흐름을 확인하기 좋다.
@@ -242,7 +230,6 @@ epochs       = 20
 
 ```text
 hidden_size: 128 -> 256
-num_layers: 1 -> 2
 dropout: 0.2 -> 0.3 또는 0.5
 learning_rate: 0.001 -> 0.0005
 ```
@@ -394,30 +381,20 @@ class 1: static
 class 2: action
 ```
 
-각 세션의 라벨은 해당 세션 디렉터리 아래의 `session_meta_snapshot.yaml`에서 읽는다.
+각 세션의 라벨은 현재 `Preprocessing.py`의 `--label` 인자로 지정한다
+(세션 메타 YAML 자동 반영은 §14의 개선 항목).
 
-예:
-
-```yaml
-experiment:
-  objective: "3-class activity classification"
-  label_target: "empty"
-  split_strategy: "train"
+```bash
+python model_train/model/Preprocessing.py --session-dir <세션 경로> --label empty
 ```
 
-이 경우 다음처럼 해석한다.
-
-```text
-20260513/session_1 = empty = class 0 = train split
-```
-
-그래서 `Preprocessing.py`에서 이 세션의 모든 window 라벨을 `0`으로 주는 것이 맞다.
+이 경우 이 세션의 모든 window 라벨이 `0`이 된다.
 
 ```python
 y = np.full(len(windows), 0, dtype=np.int64)
 ```
 
-라벨 문자열과 클래스 번호는 다음 규칙으로 매핑한다.
+라벨 문자열과 클래스 번호는 다음 규칙(`LABEL_MAP`)으로 매핑한다.
 
 ```text
 "empty"  -> 0
@@ -437,15 +414,17 @@ class 1: static
 class 2: action
 ```
 
-세션별 라벨과 split은 각 세션의 `session_meta_snapshot.yaml`에서 관리한다.
+세션별 라벨·split을 각 세션의 `session_meta_snapshot.yaml`에서 관리하는 방향이 목표다.
 
 ```text
-20260513/session_1/session_meta_snapshot.yaml -> label_target: "empty",  split_strategy: "train"
-20260513/session_2/session_meta_snapshot.yaml -> label_target: "static", split_strategy: "train"
-20260513/session_3/session_meta_snapshot.yaml -> label_target: "action", split_strategy: "train"
+raw/20260616/session_1/session_meta_snapshot.yaml -> label_target: "empty",  split_strategy: "train"
+raw/20260616/session_2/session_meta_snapshot.yaml -> label_target: "static", split_strategy: "train"
+raw/20260616/session_3/session_meta_snapshot.yaml -> label_target: "action", split_strategy: "train"
 ```
 
-이후에는 `Preprocessing.py`에서 `LABEL = 0` 같은 값을 직접 바꾸는 방식보다, 각 세션의 YAML을 읽어서 `label_target`과 `split_strategy`를 자동으로 반영하는 방식이 좋다.
+이후에는 `--label`을 사람이 넘기는 방식보다, 각 세션의 YAML에서 `label_target`과
+`split_strategy`를 자동으로 반영하는 방식이 좋다. 이를 위해서는 수집 시점에
+`session_meta.yaml`의 `label_target`을 위 3-class 값으로 기록하는 컨벤션 정비가 선행되어야 한다.
 
 ---
 
@@ -541,7 +520,7 @@ experiment:
   split_strategy: "train"
 ```
 
-전처리 코드는 각 세션을 순회하면서 해당 YAML의 `experiment` 아래 값을 읽는다.
+이 방식이 구현되면 전처리 코드는 각 세션을 순회하면서 해당 YAML의 `experiment` 아래 값을 읽는다.
 
 ```text
 label_target:
@@ -559,7 +538,7 @@ split_strategy:
 예를 들어 다음과 같이 해석한다.
 
 ```text
-dataset/20260513/session_1
+mac_collector_output/raw/20260616/session_1
   session_meta_snapshot.yaml
     experiment.label_target: "empty"
     experiment.split_strategy: "train"
@@ -575,29 +554,34 @@ dataset/20260513/session_1
 
 ---
 
-## 13. LSTM.py에 넣을 구성
-
-`LSTM.py`에는 처음에 다음 구성만 넣는 것이 좋다.
+## 13. LSTM.py 구성 (현행)
 
 ```text
 1. import
-2. LSTMClassifier 클래스
+2. LSTMClassifier 클래스 (input_size는 생성 시 주입)
 3. 학습용 설정값
-4. X, y 로드 또는 import
-5. Tensor 변환
-6. DataLoader 생성
-7. train 함수
-8. 실행부
+4. make_dataloader(X, y) — Tensor 변환 + DataLoader
+5. train(X, y, label_name, epochs) — 학습 루프
+6. __main__ — argparse로 run_preprocessing() 호출 후 train() 실행
+```
+
+실행:
+
+```bash
+python model_train/model/LSTM.py \
+    --session-dir mac_collector_output/raw/20260616/session_21 \
+    --label empty --epochs 20
 ```
 
 모델 클래스는 다음 책임만 갖게 한다.
 
 ```text
-입력: (batch, 300, 156)
+입력: (batch, 300, feature)
 출력: (batch, num_classes)
 ```
 
 전처리 책임은 `Preprocessing.py`에 두고, 학습 책임은 `LSTM.py`에 둔다.
+`LSTM.py`를 import해도 전처리·학습이 자동 실행되지 않는다 (데이터는 `train(X, y)`로 주입).
 
 ---
 

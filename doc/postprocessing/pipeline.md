@@ -1,67 +1,64 @@
 # 후처리 파이프라인
 
-Mac 수집기 JSONL → 다중 RX 시간 정렬 → 슬라이딩 윈도 → 학습 텐서 `(N, 3, 52, 200)`.
+수집 JSONL → `tx_seq` 격자 정렬 → 슬라이딩 윈도 → 학습 텐서 `X = (N, 300, RX수×52)`.
 
-현재 구현: [`add/main.py`](../../add/main.py) (단일 스크립트, 상단 경로·상수 수정 후 실행).
+구현: [`model_train/model/Preprocessing.py`](../../model_train/model/Preprocessing.py)
+(USB·AP 두 파이프라인의 JSONL을 동일하게 처리)
+
+## 실행
+
+```bash
+source .venv/bin/activate    # numpy 필요 (quickstart.md §0)
+
+python model_train/model/Preprocessing.py                    # 최신 세션 자동 선택
+python model_train/model/Preprocessing.py \
+    --session-dir mac_collector_output/raw/20260616/session_21 \
+    --rx-ids 102 \
+    --label empty
+```
+
+| 인자 | 기본 | 의미 |
+|------|------|------|
+| `--session-dir` | 최신 세션 자동 | `raw/YYYYMMDD/session_<id>` 디렉터리 |
+| `--rx-ids` | `102` | 사용할 RX `device_id` 목록 (공백 구분) |
+| `--label` | `empty` | 세션 전체 라벨: `empty` / `static` / `action` |
+
+다른 코드에서는 `run_preprocessing(session_dir, rx_ids, label_name)` 함수로 호출합니다
+(`LSTM.py`가 이 방식 사용).
 
 ## 입력
-
-수집기 출력 예:
 
 ```text
 mac_collector_output/raw/YYYYMMDD/session_<id>/device_<device_id>.jsonl
 ```
 
-JSONL 레코드 주요 필드: `received_at_unix_us`, `device_id`, `csi_amp` (float 배열, 펌웨어당 최대 64개).
+레코드 필수 필드: `device_id`, `tx_seq`, `csi_amp`(펌웨어당 최대 64개, 앞 52개 사용).
+**`tx_seq`가 `null`인 v1 레코드는 건너뜁니다** (건수 경고 출력) — 격자 정렬 키가 없기 때문.
 
-## 상수 (`add/main.py`)
+## 상수
 
-| 상수 | 값 | 의미 |
-|------|-----|------|
-| `RX_IDS` | `[101, 102, 103]` | 사용할 RX `device_id` (환경에 맞게 수정) |
-| `F_S` | 100 | 목표 샘플링 (Hz), 펌웨어 10ms 전송과 맞춤 |
-| `WINDOW` | 200 | 윈도 길이 (2초 @ 100Hz) |
-| `STRIDE` | 100 | stride (1초) |
-| `N_SUB` | 52 | 모델 입력 서브캐리어 수 |
-
-## 실행 전 수정
-
-1. **`SESSION_DIR`** — 수집 결과 디렉터리로 변경:
-
-```python
-SESSION_DIR = Path("mac_collector_output/raw/20260513/session_1")
-```
-
-2. **`RX_IDS`** — 해당 세션에 켜 둔 `device_id` 목록과 일치
-3. **`csi_amp` 길이** — 펌웨어는 최대 64 bin을 보냅니다. `main.py`는 `N_SUB=52`로 보간·스택하므로, bin 수가 52가 아니면 **슬라이스/인덱스 매핑**을 스크립트에 추가해야 합니다 (유효 톤 매핑은 실험별로 `add/main.py`에 반영).
+값은 [architecture.md 상수표](../overview/architecture.md)가 정본입니다.
+요약: `F_S=100`, `WINDOW=300`(3초), `STRIDE=30`(0.3초), `N_SUB=52`, 세션 상한 5분.
 
 ## 처리 단계
 
-1. **로드** — `SESSION_DIR` 아래 `*.jsonl`을 `device_id`별 버퍼 `(received_at_unix_us, csi_amp)`에 적재. `tx_seq`가 있는 레코드(UDP v2)는 별도 버퍼에도 적재
-2. **정렬** (`ALIGN_MODE`, 기본 `"auto"`) → `aligned` shape `(3, T, 52)`
-   - **`tx_seq` 정렬** (모든 RX에 `tx_seq`가 있을 때): TX ESP-NOW 카운터를 공통 축으로 사용.
-     모든 RX가 같은 프레임에 같은 `tx_seq`를 기록하므로 네트워크 지터가 없는 TX 쪽 10ms 클럭이다.
-     공통 구간에 1스텝(=10ms) 격자를 만들고 빈 라운드는 선형 보간. 라운드 커버리지를 RX별로 출력
-   - **`recv_time` 정렬** (v1 데이터 fallback): Mac 수신 시각을 100Hz `t_grid`에 선형 보간
-3. **윈도잉** — `WINDOW`/`STRIDE`로 `(N, 3, 52, 200)` 텐서 `X` 생성 (RX 축 순서: `RX_IDS` 순)
+1. **로드** — 세션의 `*.jsonl`을 `device_id`별 버퍼 `(tx_seq, csi_amp)`로 적재, `tx_seq` 오름차순 정렬
+2. **tx_seq 격자 정렬** — TX ESP-NOW 카운터는 모든 RX가 같은 프레임에 같은 값을 기록하므로
+   네트워크 지터 없는 10ms 클럭입니다. 모든 RX가 겹치는 공통 구간에 1스텝(=10ms) 격자를
+   만들고, 빠진 라운드는 서브캐리어별 선형 보간 → `aligned = (RX수, T, 52)`
+3. **윈도잉** — `WINDOW`/`STRIDE` 슬라이딩 → `X = (N, 300, RX수×52)`
+   (RX축을 feature축으로 병합: RX 1대=52, 3대=156)
+4. **라벨** — `--label`값을 `LABEL_MAP`(empty=0, static=1, action=2)으로 변환해
+   `y = (N,)` 전체에 부여 (세션 단위 단일 라벨)
 
-주의: TX 보드가 수집 중 재부팅하면 `tx_seq`가 0부터 다시 시작해 tx_seq 축이 깨집니다 — 그런 세션은 `ALIGN_MODE = "recv_time"`으로 처리하세요.
+주의: TX 보드가 수집 중 재부팅하면 `tx_seq`가 0부터 다시 시작해 격자가 깨집니다 —
+그런 세션은 재수집을 권장합니다.
 
-## 실행
+## 다음 단계
 
-```bash
-source .venv/bin/activate   # numpy 필요
-# add/main.py 상단 SESSION_DIR, RX_IDS 수정 후
-python add/main.py
-```
-
-## Python 환경
+`X`, `y`는 [`LSTM.py`](../../model_train/model/LSTM.py)의 입력입니다 —
+[lstm-design.md](lstm-design.md) 참고.
 
 ```bash
-python3 -m venv .venv && source .venv/bin/activate
-pip install -r requirements-viz.txt
+python model_train/model/LSTM.py --epochs 20   # 전처리 + 학습 (PyTorch 필요)
 ```
-
-`meshsense_cli` 사전 점검·수집 종료 후 PNG 생성 시 `.venv` 없으면 위 설치를 안내·선택 실행합니다.
-
-ESP-IDF 빌드용 Python venv와는 별도입니다. 개요: [architecture.md](../overview/architecture.md).

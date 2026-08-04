@@ -1,69 +1,59 @@
 # 빠른 시작
 
-실험 순서: **TX 플래시 → Mac이 SoftAP 접속(IP 확인) → RX 플래시 → 수집기 → 후처리**.
-
-터미널에서 단계별 안내가 필요하면:
-
-```bash
-python scripts/meshsense_cli.py
-```
-
-메뉴 **[1] 전체 가이드** 가 위 순서와 동일합니다. 아래는 수동 명령 참고용입니다.
-
-## 0. 호스트 설정 (최초 1회)
+## 0. 호스트 설정 (최초 1회 — 이 블록이 셋업 명령의 유일한 정본)
 
 ```bash
 git clone --recursive <repo-url>
 cd Wifi_esp32
 cp scripts/meshsense_config.example.json scripts/meshsense_config.json
-# collector.ip = Mac on TX SoftAP (ipconfig getifaddr en0, often 192.168.4.2)
+# collector.ip = TX SoftAP에 접속한 Mac IP (ipconfig getifaddr en0, 보통 192.168.4.2)
+# AP 파이프라인만 필요. USB 파이프라인은 config 수정 없이 동작
 
-python scripts/idf_bootstrap.py -y   # esp-idf/ + ~/.espressif/ (최초만 오래 걸림)
+python scripts/idf_bootstrap.py -y   # esp-idf/ + ~/.espressif (최초만 10–30분)
+
+python3 -m venv .venv && source .venv/bin/activate
+pip install -r requirements-viz.txt  # numpy·matplotlib·pyserial (수집·시각화·후처리)
 ```
 
-TX/RX 플래시·Wi-Fi·수집기 포트는 `meshsense_config.json`만 수정합니다.  
-플래시 스크립트가 툴체인이 없으면 bootstrap을 자동 호출합니다. 상세: [scripts/README.md](../../scripts/README.md).  
-`idf.py` 오류: [esp-idf-troubleshooting.md](esp-idf-troubleshooting.md).
+- 이미 clone한 경우: `git submodule update --init esp-idf`
+- `idf.py`/빌드 오류: [esp-idf-troubleshooting.md](esp-idf-troubleshooting.md)
+- 수집 전 `mac_collector/session_meta.yaml`의 **`session_id`** 를 run마다 갱신 ([collector.md](../mac-collector/collector.md))
 
-`mac_collector/session_meta.yaml`: **`session_id`**(run 구분, 수집기 SSOT) 및 `network:`를 config와 수동 일치 ([collector.md](../mac-collector/collector.md)).
-
-## 1. TX/AP 노드
+## 1. 파이프라인 선택
 
 ```bash
-python scripts/tx_registry.py add --port /dev/cu.usbmodem101 --board-name TX1
-python scripts/flash_tx.py -p /dev/cu.usbmodem101 --monitor
+python scripts/meshsense_cli.py
 ```
 
-[tx-ap-node.md](../firmware/tx-ap-node.md)
+| 메뉴 | 파이프라인 | 언제 쓰나 |
+|------|-----------|----------|
+| **[1] USB 수집** | RX 보드를 USB로 연결, 시리얼로 100Hz 수집 | **모델 학습 데이터 수집 (권장)** — 손실 0%, Wi-Fi 설정 불필요 |
+| **[2] AP 실시간 수집** | TX SoftAP + RX UDP 무선 전송 | 실시간·무선 배치가 필요할 때 |
 
-## 2. Mac 네트워크·수집기
+두 경로 모두 같은 JSONL 레이아웃으로 저장되어 후처리가 공용입니다 ([architecture.md](architecture.md)).
 
-1. Mac Wi-Fi → TX SoftAP (`meshsense_config.json` → `ap.ssid`)  
-2. 수집기 (`collector.port`와 CLI `--port` 일치):
+## 2-A. USB 수집 경로
+
+보드 등록 → CLI `[1] USB 수집 → [1] 보드 플래시 → [2] 수집(시간 입력)` 순서면 끝.
+상세와 수동 명령: [usb-collection.md](../pipeline/usb-collection.md)
+
+## 2-B. AP 실시간 수집 경로
+
+CLI `[2] AP 실시간 수집 → [1] 전체 가이드` 가 아래 순서를 단계별로 안내합니다
+(`python scripts/meshsense_cli.py --guide` 로 바로 시작).
+
+1. TX 등록·플래시: `tx_registry.py add` → `flash_tx.py`
+2. Mac Wi-Fi를 TX SoftAP(`ap.ssid`)에 접속, IP 확인
+3. 수집기 실행 (메뉴 `[3] 수집기 실행`)
+4. RX 등록·플래시: `device_registry.py` → `flash_rx.py`
+
+상세와 수동 명령: [ap-realtime.md](../pipeline/ap-realtime.md) · [collector.md](../mac-collector/collector.md)
+
+## 3. 후처리·학습
 
 ```bash
-python mac_collector/udp_collector_mvp.py \
-  --host 0.0.0.0 --port 9999 \
-  --output-dir mac_collector_output \
-  --device-registry-csv mac_collector/device_registry.csv \
-  --session-meta mac_collector/session_meta.yaml
+python model_train/model/Preprocessing.py    # 최신 세션 자동 선택, X=(N, 300, RX수×52)
+python model_train/model/LSTM.py --epochs 20 # 전처리 + LSTM 학습 (PyTorch 필요)
 ```
 
-## 3. RX 노드
-
-```bash
-python scripts/device_registry.py verify
-python scripts/flash_rx.py -p /dev/cu.usbmodem102 --monitor
-```
-
-[rx-csi-sender.md](../firmware/rx-csi-sender.md)
-
-## 4. 후처리
-
-[`add/main.py`](../../add/main.py) 상단 `SESSION_DIR`·`RX_IDS`를 수집 경로에 맞게 수정한 뒤:
-
-```bash
-python add/main.py
-```
-
-[pipeline.md](../postprocessing/pipeline.md)
+상세: [pipeline.md](../postprocessing/pipeline.md) · [lstm-design.md](../postprocessing/lstm-design.md)

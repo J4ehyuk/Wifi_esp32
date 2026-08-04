@@ -4,99 +4,40 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-MeshSense — WiFi CSI(Channel State Information) 기반 실내 행동 인식 시스템. ESP32-S3 보드들이 CSI를 수집하고, Mac 수집기가 UDP로 데이터를 받아 JSONL로 저장하며, 후처리 파이프라인이 ML 모델 학습 텐서를 생성한다.
+MeshSense — WiFi CSI 기반 실내 행동 인식 시스템. 수집 파이프라인 2개(USB 시리얼 / SoftAP+UDP)로
+ESP32-S3가 CSI를 모으고, Mac이 JSONL로 저장하며, `model_train/`이 LSTM 학습 텐서를 만든다.
 
-사용자 문서: `doc/README.md` (계층: `doc/overview/`, `doc/firmware/`, `doc/mac-collector/`, `doc/postprocessing/`).
+**아키텍처·상수·데이터 흐름은 `doc/overview/architecture.md`가 유일한 정본이다** — 이 파일에 복사하지 말 것.
+문서 인덱스·저장소 레이아웃: `doc/README.md`. 셋업 명령: `doc/overview/quickstart.md`.
 
-## Architecture
-
-```
-TX/AP Node (esp32s3_tx_ap_node)
- └─ SoftAP(비콘 100TU) + ESP-NOW 10ms 브로드캐스트 + UDP heartbeat
- │
-RX Nodes (esp32s3_csi_sender) × N대
- └─ TX/AP에 STA 접속 → CSI 콜백 수신
- └─ 전처리(이동평균 → z-score → 이상치 클리핑) → UDP 전송 (10ms 상한, 100Hz 목표)
- │
-Mac Collector (mac_collector/udp_collector_mvp.py)
- └─ UDP 수신 → 패킷 검증 → JSONL 저장
- │
-Post-processing (add/)
- └─ JSONL 로드 → 64→52 매핑(선택) → 100Hz 보간 → 슬라이딩 윈도우 → (N, 3, 52, 200) 텐서
-```
-
-**UDP 패킷 프로토콜:** little-endian 40바이트 헤더 (`magic=0x4353`, `version=2`(v1 하위호환), `payload_type=1`, v2 `tx_seq`=cross-RX 동기화 키) + `float32 csi_amp[sample_count]`. 상세: `doc/mac-collector/udp-packet-schema.md`.
-
-**데이터 저장 경로:** `mac_collector_output/raw/YYYYMMDD/session_<id>/device_<id>.jsonl` (git 제외)
-
-## Build & Run Commands
-
-### ESP-IDF 펌웨어 (ESP32-S3)
-
-프로젝트 로컬: `esp-idf/` (git submodule, **v5.2.2**) · 툴체인 `~/.espressif` · 마커 `프로젝트/.espressif/` (gitignore). 트러블슈팅: `doc/overview/esp-idf-troubleshooting.md`.
+## 자주 쓰는 명령
 
 ```bash
-python scripts/meshsense_cli.py             # [1] 전체 가이드 (TX→Wi-Fi→RX→수집)
-python scripts/meshsense_cli.py --guide     # 가이드 바로 시작
-
-git clone --recursive <repo>
-cp scripts/meshsense_config.example.json scripts/meshsense_config.json
-python scripts/idf_bootstrap.py -y          # 최초 1회 (submodule + install.sh esp32s3)
-
-python scripts/device_registry.py verify
-python scripts/flash_rx.py -p /dev/cu.usbmodemXXXX -y   # bootstrap 자동 포함
-python scripts/flash_tx.py -p /dev/cu.usbmodemXXXX -y
-
-# 전역 ~/esp/esp-idf 만 사용: --skip-idf-bootstrap
-# 보드 전환 시: python scripts/flash_rx.py ... --clean -y
+python scripts/meshsense_cli.py                          # 메뉴 CLI: [1] USB 수집 / [2] AP 실시간 수집
+python scripts/idf_bootstrap.py -y                       # ESP-IDF 준비 (최초 1회)
+python scripts/flash_tx.py -p /dev/cu.usbmodemXXXX -y    # AP 파이프라인 TX (tx_registry 기반)
+python scripts/flash_rx.py -p /dev/cu.usbmodemXXXX -y    # AP 파이프라인 RX (device_registry 기반)
+python mac_collector/udp_collector_mvp.py                # AP 파이프라인 수집기 (기본 인자로 동작)
+python model_train/model/Preprocessing.py                # 후처리 (최신 세션 자동 선택)
+python model_train/model/LSTM.py --epochs 20             # 전처리 + LSTM 학습 (PyTorch 필요)
 ```
 
-망 설정 SSOT: `scripts/meshsense_config.json` (`ap`, `collector`). RX/TX 플래시.
-run `session_id` SSOT: `mac_collector/session_meta.yaml` — 수집기가 파싱해 `session_<id>/` 경로 결정 (펌웨어 session_id 없음, v1 패킷 필드=0).
-RX: `device_registry.csv` + `flash_rx.py`. TX: `tx_registry.csv` + `flash_tx.py`.
-TODO: `session_meta.yaml` `network:` ↔ `meshsense_config.json` 자동 동기화 (현재 수동).
+- USB 파이프라인 펌웨어(`esp32s3_csi_send_poc`/`esp32s3_csi_recv_poc`)는 CMake 파라미터가 없어
+  `flash_*.py` 대상이 아님 — CLI `[1] 보드 플래시` 또는 `idf.py` 직접 사용
+- ESP-IDF는 프로젝트 로컬 submodule `esp-idf/`(v5.2.2), 툴체인은 `~/.espressif`.
+  트러블슈팅: `doc/overview/esp-idf-troubleshooting.md`
+- Python 환경 2개 분리: 프로젝트 `.venv`(수집·후처리) / ESP-IDF venv(빌드)
 
-TX/AP 파라미터는 `esp32s3_tx_ap_node/CMakeLists.txt`에서 CMake cache로 관리: `TX_AP_SSID`, `TX_AP_INTERVAL_MS`(기본 10), `TX_AP_CHANNEL` 등.
+## SSOT 위치 (수정 시 여기만)
 
-### Mac Collector (Python)
-
-```bash
-python mac_collector/udp_collector_mvp.py \
- --host 0.0.0.0 --port 9999 \
- --output-dir mac_collector_output \
- --device-registry-csv mac_collector/device_registry.csv \
- --session-meta mac_collector/session_meta.yaml
-```
-
-### Post-processing
-
-```bash
-# add/main.py: SESSION_DIR·RX_IDS 상단을 mac_collector_output/raw/.../session_<id> 에 맞게 수정
-python add/main.py
-```
-
-상세: `doc/postprocessing/pipeline.md`
-
-Python 환경: `.venv` (numpy, matplotlib). ESP-IDF는 별도 venv.
-
-## Key Constants (100Hz 기준)
-
-| 위치 | 상수 | 값 | 의미 |
-|------|------|----|------|
-| `csi_sender_main.c` | `SEND_INTERVAL_US` | 10000 | RX 전송 상한 (10ms, 100Hz) |
-| TX CMake | `TX_AP_ESPNOW_INTERVAL_MS` | 10 | ESP-NOW CSI 유도 (100Hz 목표) |
-| TX CMake | `TX_AP_BEACON_INTERVAL_TU` | 100 | SoftAP 비콘 (안정) |
-| TX CMake | `TX_AP_INTERVAL_MS` | 10 | UDP heartbeat |
-| `CMakeLists.txt` (TX) | `TX_AP_INTERVAL_MS` | 10 | TX 브로드캐스트 주기 (ms) |
-| 펌웨어 UDP | `sample_count` | 최대 64 | RX CSI 진폭 개수 |
-| `add/main.py` | `F_S` | 100 | 샘플링 주파수 (Hz) |
-| `add/main.py` | `WINDOW` | 300 | 윈도우 크기 (2초) |
-| `add/main.py` | `STRIDE` | 100 | 스트라이드 (1초) |
-| `add/main.py` | `N_SUB` | 52 | 후처리 OFDM 서브캐리어 수 |
+- 망 설정: `scripts/meshsense_config.json` (`ap`, `collector`, `rx.espnow_only`)
+- run `session_id`: `mac_collector/session_meta.yaml` (파서: `scripts/session_meta.py`)
+- RX/TX 보드: `mac_collector/device_registry.csv` / `tx_registry.csv`
+  (공통 로직: `scripts/registry_core.py`)
+- 상수표: `doc/overview/architecture.md`
 
 ## Conventions
 
 - 한국어 커밋 메시지 및 주석 사용
-- RX `device_id` / `sta_mac`: `mac_collector/device_registry.csv` — `scripts/device_registry.py`, `scripts/flash_rx.py`
-- TX `tx_node_id` / `chip_mac`: `mac_collector/tx_registry.csv` — `scripts/tx_registry.py`, `scripts/flash_tx.py`
-- run/session: `session_meta.yaml` `session_id` (수집기 SSOT); 장치: `device_registry.csv`
+- 문서에 상수·메뉴 번호를 복붙하지 말고 `architecture.md` 표 또는 코드 링크로 위임
+- TODO: `session_meta.yaml` `network:` ↔ `meshsense_config.json` 자동 동기화 (현재 수동)

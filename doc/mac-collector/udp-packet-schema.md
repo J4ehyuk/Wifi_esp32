@@ -57,7 +57,7 @@ TX/AP 노드(`tx_ap_main.c`)는 ESP-NOW 프레임 페이로드 맨 앞에 `uint3
 - 비콘·UDP data 프레임 등 ESP-NOW가 아닌 프레임에서 유발된 CSI는 flags bit0=0, `tx_seq=0`
 - 수집기는 flags bit0=1일 때만 JSONL `tx_seq`에 기록 (아니면 `null`)
 - 후처리에서 `tx_seq`를 join key로 쓰면 여러 RX 보드의 CSI를 프레임 단위로 정렬 가능
-  (USB 파이프라인 프레임 v2의 `tx_seq`와 같은 의미)
+  (USB 파이프라인 시리얼 프레임 v2의 `tx_seq`와 같은 의미 — [usb-collection.md](../pipeline/usb-collection.md))
 
 ## 5) session_id (펌웨어 vs Mac)
 

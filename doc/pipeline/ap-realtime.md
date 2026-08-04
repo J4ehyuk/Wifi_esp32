@@ -1,53 +1,76 @@
-# TX/AP 노드 펌웨어
+# AP 실시간 수집 파이프라인 (SoftAP + UDP)
 
-`esp32s3_tx_ap_node` — MeshSense TX/AP 노드.
+TX가 SoftAP를 열고 RX들이 STA로 접속해 CSI를 UDP로 Mac 수집기에 실시간 전송합니다.
 
-- SoftAP (`MeshSense_TX_AP` / `mstx1234` 기본 예시)
-- **ESP-NOW** 브로드캐스트 (기본 **10ms**, `espnow_interval_ms`) — CSI 100Hz 유도용 주 트래픽
-- UDP broadcast (기본 **10ms**, 포트 **3333**) — 보조 heartbeat
-- SoftAP 비콘 (기본 **100 TU**, `beacon_interval_tu`) — 안정 AP; 짧은 TU(10)는 gap 유발
+```text
+TX/AP (esp32s3_tx_ap_node) ── ESP-NOW 10ms unicast ──▶ RX (esp32s3_csi_sender) × N
+                                                        │ CSI 콜백 → 전처리 → UDP
+Mac (Wi-Fi로 TX SoftAP 접속) ◀────────────────────── udp://collector.ip:9999
+```
 
-## 사전 준비
+실행은 CLI 메뉴 **[2] AP 실시간 수집**:
+`[1] 전체 가이드 · [2] 보드 플래시 · [3] 수집기 실행 · [4] 사전 점검 · [5] 보드 관리`
 
-- ESP-IDF v5.x 및 `export.sh`
-- `mac_collector/tx_registry.csv` — [scripts/README.md](../../scripts/README.md)
-- `scripts/meshsense_config.json` (example 복사)
+## TX/AP 노드 (`esp32s3_tx_ap_node`)
 
-## 플래시 (권장)
+- **SoftAP** — `meshsense_config.json` `ap.ssid`/`ap.pass` (기본 `MeshSense_TX_AP`/`mstx1234`), 비콘 `beacon_interval_tu`(기본 100 TU)
+- **ESP-NOW 10ms** (`espnow_interval_ms`) — CSI 100Hz 유도용 **유일한 자극원**.
+  STA가 접속하면 unicast로 전환해 DTIM 게이팅을 우회하고, 페이로드에 `g_enow_seq`
+  카운터(=UDP v2 `tx_seq`)를 실어 보냄
+- 대역폭 HT20 고정 (HT40 secondary 채널에서 RX CSI 콜백 누락 문제 회피)
+
+플래시:
 
 ```bash
-cp scripts/meshsense_config.example.json scripts/meshsense_config.json
-
 python scripts/tx_registry.py add --port /dev/cu.usbmodem101 --board-name TX1
 python scripts/flash_tx.py -p /dev/cu.usbmodem101 --monitor
 ```
 
-`meshsense_config.json`의 `ap.*` → TX CMake `TX_AP_*`. `tx_registry.csv` → `TX_AP_NODE_ID`.  
-run `session_id`는 Mac `session_meta.yaml` (펌웨어 미사용).
+`meshsense_config.json`의 `ap.*` → CMake `TX_AP_*` 주입. `tx_registry.csv`의 `tx_node_id`는
+호스트 측 보드 식별용(플래시 상태 추적)이며 펌웨어에는 주입되지 않습니다.
 
-## meshsense_config.json (망 SSOT)
+## RX 노드 (`esp32s3_csi_sender`)
 
-| 키 | CMake |
-|----|--------|
-| `ap.ssid` / `ap.pass` | `TX_AP_SSID` / `TX_AP_PASS` |
-| `ap.channel` | `TX_AP_CHANNEL` |
-| `ap.broadcast_port`, `interval_ms`, `beacon_interval_tu`, … | TX UDP·비콘 |
+TX SoftAP에 STA로 접속해 CSI 콜백을 받고, 전처리 후 UDP로 전송합니다.
 
-## RX와 맞출 것
+- **CSI 샘플링** — `SEND_INTERVAL_US=9000` (9ms 상한 = 100Hz + jitter 허용).
+  콜백은 큐에 넣고 워커 태스크가 전처리·`sendto` 수행 (콜백 블로킹 방지).
+  `WIFI_PS_NONE`, `listen_interval=1`
+- **전처리** — 이동평균(3-tap) → z-score → 이상치 클리핑(±3σ)
+- **tx_seq 추출** — ESP-NOW 프레임(category `0x7f` + OUI `18:fe:34`)에서 TX 카운터를
+  추출해 UDP 헤더 `tx_seq`에 탑재 (cross-RX 동기화 키, [udp-packet-schema.md](../mac-collector/udp-packet-schema.md))
+- **ESP-NOW 전용 필터** — `rx.espnow_only: true` (CMake `CSI_ESPNOW_ONLY=1`, 기본 0)이면
+  ESP-NOW 프레임 CSI만 전송해 데이터 균질성·tx_seq 커버리지 확보.
+  걸러진 수는 5초 로그 `eo_drop`으로 확인
 
-동일 `meshsense_config.json`의 `ap.ssid` / `ap.pass`가 RX STA Wi-Fi(`CSI_WIFI_*`)로 플래시됩니다. 별도 파일 불필요.
+플래시 (USB MAC → `device_registry.csv` → `CSI_DEVICE_ID` 주입):
+
+```bash
+python scripts/device_registry.py verify
+python scripts/flash_rx.py -p /dev/cu.usbmodemXXXX --monitor
+# 보드 전환 시: --clean -y
+```
+
+## Mac 네트워크·수집기
+
+1. Mac Wi-Fi를 TX SoftAP(`ap.ssid`)에 접속하고 IP 확인: `ipconfig getifaddr en0`
+   (보통 `192.168.4.2` — `meshsense_config.json` `collector.ip`와 일치해야 RX가 도달)
+2. 수집기 실행 — CLI `[3] 수집기 실행` 또는 [collector.md](../mac-collector/collector.md)의 수동 명령
 
 ## 수동 빌드 (고급)
 
 ```bash
-cd esp32s3_tx_ap_node
+cd esp32s3_tx_ap_node   # 또는 esp32s3_csi_sender
 idf.py set-target esp32s3
-idf.py -DTX_AP_SSID="MeshSense_TX_AP" -DTX_AP_PASS="mstx1234" -DTX_AP_NODE_ID=1 build
-idf.py -p /dev/tty.usbmodemXXXX flash monitor
+idf.py -DTX_AP_SSID="MeshSense_TX_AP" -DTX_AP_PASS="mstx1234" build          # TX
+idf.py -DCSI_WIFI_SSID="MeshSense_TX_AP" -DCSI_WIFI_PASS="mstx1234" \
+       -DCSI_COLLECTOR_IP="192.168.4.2" -DCSI_DEVICE_ID=101 build            # RX
+idf.py -p /dev/cu.usbmodemXXXX flash monitor
 ```
 
-## 트러블슈팅
+## 진단
 
-- **registry에 MAC 없음**: `tx_registry.py add --port …`
-- **RX 미접속**: `meshsense_config.json` `ap` 확인
-- **IDF_PATH 없음**: `export.sh`
+- Hz 확인: `python scripts/measure_csi_hz.py mac_collector_output/raw/.../session_<id>`
+- 100Hz 미달 이력·원인 분석: [csi-rate-troubleshooting.md](../overview/csi-rate-troubleshooting.md)
+- registry에 MAC 없음 → `tx_registry.py add` / `device_registry.py add`
+- 수집기에 패킷이 안 옴 → `collector.ip`(Mac IP 변동 주의)·포트·Mac Wi-Fi 접속 확인
