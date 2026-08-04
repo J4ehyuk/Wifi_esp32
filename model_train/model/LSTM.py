@@ -1,26 +1,24 @@
+import argparse
+from pathlib import Path
+
 import torch
 import torch.nn as nn
 from torch.utils.data import DataLoader, TensorDataset
-from pathlib import Path
 
 
-# Preprocessing.py를 실행해서 학습에 필요한 X, y를 가져온다.
-# PyTorch에서는 데이터를 보통 Tensor 형태로 모델에 넣는데,
-# 여기서는 아직 NumPy 배열인 X, y를 가져온 뒤 아래 make_dataloader()에서 Tensor로 바꾼다.
+# 학습 데이터는 Preprocessing.run_preprocessing()이 만든 NumPy 배열을
+# train(X, y, ...)로 주입받는다. import 시점에 전처리가 실행되지 않는다.
 #
-# X shape: (N, 300, 156)
-#   N   = window 개수
-#   300 = 시간 길이, 3초 * 100Hz
-#   156 = 한 시점의 feature 개수, RX 3개 * 서브캐리어 52개
+# X shape: (N, WINDOW, feature)
+#   N       = window 개수
+#   WINDOW  = 시간 길이 (3초 * 100Hz = 300)
+#   feature = RX 개수 * 서브캐리어 52개 (RX 1대면 52, 3대면 156)
 #
 # y shape: (N,)
 #   각 window의 정답 클래스 번호
-from Preprocessing import LABEL, LABEL_NAME, SPLIT, X, y
-MODEL_TRAIN_DIR = Path(__file__).resolve().parents[0] 
-
 
 # 모델과 학습에 사용할 기본 설정값이다.
-INPUT_SIZE = 52
+# input_size는 고정 상수가 아니라 X.shape[2]에서 파생된다 (RX 대수에 자동 대응).
 HIDDEN_SIZE = 128
 NUM_LAYERS = 2
 NUM_CLASSES = 3
@@ -48,7 +46,7 @@ class LSTMClassifier(nn.Module):
     #   3 = class 0, class 1, class 2에 대한 점수
     def __init__(
         self,
-        input_size=INPUT_SIZE,
+        input_size,
         hidden_size=HIDDEN_SIZE,
         num_layers=NUM_LAYERS,
         num_classes=NUM_CLASSES,
@@ -62,8 +60,7 @@ class LSTMClassifier(nn.Module):
         # 여기서는 300개 시점의 CSI feature를 앞에서부터 순서대로 읽는다.
         #
         # input_size:
-        #   한 시점에 들어오는 feature 개수.
-        #   현재는 RX 3개 * 서브캐리어 52개 = 156.
+        #   한 시점에 들어오는 feature 개수 (RX 개수 * 서브캐리어 52개).
         #
         # hidden_size:
         #   LSTM이 각 시점마다 내부적으로 만들어내는 특징 벡터 크기.
@@ -122,7 +119,7 @@ class LSTMClassifier(nn.Module):
         return logits
 
 
-def make_dataloader():
+def make_dataloader(X, y):
     # PyTorch 모델은 NumPy 배열을 직접 학습하지 않고 Tensor를 사용한다.
     #
     # X는 CSI amplitude 실수값이므로 float32 Tensor로 바꾼다.
@@ -141,7 +138,7 @@ def make_dataloader():
     return DataLoader(dataset, batch_size=BATCH_SIZE, shuffle=True)
 
 
-def print_sample_predictions(model, device, num_samples=NUM_DEBUG_SAMPLES):
+def print_sample_predictions(model, device, X, y, num_samples=NUM_DEBUG_SAMPLES):
     # 학습이 끝난 뒤, 실제 입력 데이터 몇 개를 모델에 다시 넣어본다.
     # 목적은 "모델이 어떤 logits와 확률을 내는지" 눈으로 확인하는 것이다.
     #
@@ -155,8 +152,7 @@ def print_sample_predictions(model, device, num_samples=NUM_DEBUG_SAMPLES):
     # 요청한 개수가 전체 데이터 개수보다 크면 가능한 개수까지만 본다.
     sample_count = min(num_samples, len(X))
 
-    # X[:sample_count] shape:
-    #   (sample_count, 300, 156)
+    # X[:sample_count] shape: (sample_count, WINDOW, feature)
     sample_x = torch.tensor(X[:sample_count], dtype=torch.float32).to(device)
     sample_y = torch.tensor(y[:sample_count], dtype=torch.long).to(device)
 
@@ -193,7 +189,7 @@ def print_sample_predictions(model, device, num_samples=NUM_DEBUG_SAMPLES):
         print(f"    probs:  {[round(v, 4) for v in probs_i]}")
 
 
-def train():
+def train(X, y, label_name="?", epochs=EPOCHS):
     # 학습에 사용할 장치를 선택한다.
     # cuda:
     #   NVIDIA GPU가 있을 때 사용하는 장치.
@@ -210,11 +206,11 @@ def train():
     else:
         device = torch.device("cpu")
 
-    train_loader = make_dataloader()
+    train_loader = make_dataloader(X, y)
 
     # 모델을 만들고 선택한 장치로 보낸다.
     # .to(device)를 해야 모델 파라미터가 GPU/MPS/CPU 중 선택된 곳에 올라간다.
-    model = LSTMClassifier().to(device)
+    model = LSTMClassifier(input_size=X.shape[2]).to(device)
 
     # CrossEntropyLoss는 다중 클래스 분류에서 많이 쓰는 loss 함수다.
     #
@@ -238,15 +234,11 @@ def train():
     print(f"  device: {device}")
     print(f"  X shape: {X.shape}")
     print(f"  y shape: {y.shape}")
-    print(f"  label: {LABEL_NAME} -> class {LABEL}")
-    print(f"  split: {SPLIT}")
+    print(f"  label: {label_name}")
     print(f"  batch_size: {BATCH_SIZE}")
-    print(f"  epochs: {EPOCHS}")
+    print(f"  epochs: {epochs}")
 
-    if SPLIT not in {"train", "training"}:
-        print(f"  warning: current session split is {SPLIT!r}, but train() will still run.")
-
-    for epoch in range(1, EPOCHS + 1):
+    for epoch in range(1, epochs + 1):
         # model.train()은 모델을 학습 모드로 바꾼다.
         # Dropout 같은 층은 학습 모드와 평가 모드에서 동작이 다르다.
         model.train()
@@ -298,17 +290,28 @@ def train():
         accuracy = total_correct / total_samples
 
         print(
-            f"Epoch {epoch:02d}/{EPOCHS} "
+            f"Epoch {epoch:02d}/{epochs} "
             f"loss={avg_loss:.4f} "
             f"accuracy={accuracy:.4f}"
         )
 
-    print_sample_predictions(model, device)
+    print_sample_predictions(model, device, X, y)
 
     return model
 
 
 if __name__ == "__main__":
-    # 이 파일을 직접 실행했을 때만 학습을 시작한다.
-    # 다른 파일에서 LSTMClassifier만 import할 때는 train()이 자동 실행되지 않는다.
-    train()
+    # 이 파일을 직접 실행했을 때만 전처리 + 학습을 시작한다.
+    # 다른 파일에서 LSTMClassifier만 import할 때는 아무것도 실행되지 않는다.
+    from Preprocessing import DEFAULT_RX_IDS, LABEL_MAP, find_latest_session_dir, run_preprocessing
+
+    parser = argparse.ArgumentParser(description="세션 JSONL 전처리 후 LSTM 학습")
+    parser.add_argument("--session-dir", type=Path, default=None, help="세션 디렉터리 (기본: 최신 세션)")
+    parser.add_argument("--rx-ids", type=int, nargs="+", default=list(DEFAULT_RX_IDS))
+    parser.add_argument("--label", choices=sorted(LABEL_MAP), default="empty")
+    parser.add_argument("--epochs", type=int, default=EPOCHS)
+    args = parser.parse_args()
+
+    session_dir = args.session_dir or find_latest_session_dir()
+    X, y = run_preprocessing(session_dir, rx_ids=tuple(args.rx_ids), label_name=args.label)
+    train(X, y, label_name=args.label, epochs=args.epochs)
