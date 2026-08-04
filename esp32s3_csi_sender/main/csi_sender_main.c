@@ -11,7 +11,6 @@
 #include "esp_log.h"
 #include "esp_mac.h"
 #include "esp_netif.h"
-#include "esp_system.h"
 #include "esp_timer.h"
 #include "esp_wifi.h"
 #include "freertos/FreeRTOS.h"
@@ -92,7 +91,6 @@ static const char *TAG = "CSI_SENDER";
 static int g_udp_sock = -1;
 static struct sockaddr_in g_collector_addr;
 static uint32_t g_seq = 0;
-static uint32_t g_runtime_device_id = 0;
 static int64_t g_last_send_us = 0;
 static QueueHandle_t g_csi_queue = NULL;
 static volatile uint32_t g_csi_queue_drop = 0;
@@ -216,7 +214,6 @@ static void send_csi_from_raw(const csi_raw_item_t *item)
         return;
     }
     g_last_send_us = now_us;
-    g_csi_sent++;
 
     float amp_raw[MAX_AMP_SAMPLES];
     float amp_ma[MAX_AMP_SAMPLES];
@@ -243,7 +240,7 @@ static void send_csi_from_raw(const csi_raw_item_t *item)
     hdr.payload_type = PAYLOAD_TYPE_CSI_AMP;
     hdr.flags = item->tx_seq_valid ? CSI_FLAG_TX_SEQ_VALID : 0;
     hdr.session_id = 0;
-    hdr.device_id = g_runtime_device_id;
+    hdr.device_id = (uint32_t)DEVICE_ID;
     hdr.seq = g_seq++;
     hdr.timestamp_us = (uint64_t)now_us;
     hdr.channel = item->channel;
@@ -266,6 +263,7 @@ static void send_csi_from_raw(const csi_raw_item_t *item)
         (struct sockaddr *)&g_collector_addr,
         sizeof(g_collector_addr)
     );
+    g_csi_sent++;
 }
 
 static void csi_worker_task(void *arg)
@@ -421,8 +419,7 @@ static void init_wifi_sta(void)
 void app_main(void)
 {
     ESP_ERROR_CHECK(nvs_flash_init());
-    g_runtime_device_id = (uint32_t)DEVICE_ID;
-    ESP_LOGI(TAG, "device_id=%" PRIu32 " (run session_id on Mac)", g_runtime_device_id);
+    ESP_LOGI(TAG, "device_id=%" PRIu32 " (run session_id on Mac)", (uint32_t)DEVICE_ID);
     init_wifi_sta();
     init_udp_sender();
     init_csi_pipeline();
