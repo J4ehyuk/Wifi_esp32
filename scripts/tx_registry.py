@@ -1,10 +1,11 @@
-"""tx_registry.csv 로드·검증·MAC 조회 (TX 보드 SSOT)."""
+"""tx_registry.csv 로드·검증·MAC 조회 (TX 보드 SSOT).
+
+공통 CSV 로직은 registry_core에 있고, 이 모듈은 TX 명세·TxRecord 변환·CLI를 담당한다.
+"""
 
 from __future__ import annotations
 
 import argparse
-import csv
-import re
 import sys
 from dataclasses import dataclass
 from pathlib import Path
@@ -15,7 +16,32 @@ REPO_ROOT = SCRIPT_DIR.parent
 DEFAULT_TX_REGISTRY_PATH = REPO_ROOT / "mac_collector" / "tx_registry.csv"
 TX_PROJECT = REPO_ROOT / "esp32s3_tx_ap_node"
 
-MAC_RE = re.compile(r"^([0-9A-F]{2}:){5}[0-9A-F]{2}$")
+from registry_core import (  # noqa: E402,F401  (MAC_RE·normalize_mac은 기존 공개 API 재노출)
+    MAC_RE,
+    RegistrySpec,
+    load_rows,
+    normalize_mac,
+    save_rows,
+    suggest_next_id,
+    verify_rows,
+)
+
+TX_SPEC = RegistrySpec(
+    label="tx registry",
+    id_field="tx_node_id",
+    mac_field="chip_mac",
+    fieldnames=(
+        "tx_node_id",
+        "board_name",
+        "chip_mac",
+        "room_x_m",
+        "room_y_m",
+        "height_m",
+        "firmware_version",
+        "notes",
+    ),
+    first_id=1,
+)
 
 
 @dataclass(frozen=True)
@@ -42,46 +68,21 @@ class TxRecord:
         }
 
 
-def normalize_mac(mac: str) -> str:
-    raw = mac.strip().upper().replace("-", ":")
-    if ":" not in raw and len(raw) == 12 and re.fullmatch(r"[0-9A-F]{12}", raw):
-        raw = ":".join(raw[i : i + 2] for i in range(0, 12, 2))
-    if not MAC_RE.match(raw):
-        raise ValueError(f"invalid MAC address: {mac!r}")
-    return raw
+def _from_row(row: Dict[str, str]) -> TxRecord:
+    return TxRecord(
+        tx_node_id=int(row["tx_node_id"]),
+        board_name=row["board_name"],
+        chip_mac=row["chip_mac"],
+        room_x_m=row["room_x_m"],
+        room_y_m=row["room_y_m"],
+        height_m=row["height_m"],
+        firmware_version=row["firmware_version"],
+        notes=row["notes"],
+    )
 
 
 def load_tx_registry(path: Path = DEFAULT_TX_REGISTRY_PATH) -> List[TxRecord]:
-    if not path.exists():
-        raise FileNotFoundError(f"tx registry not found: {path}")
-
-    records: List[TxRecord] = []
-    with path.open("r", encoding="utf-8", newline="") as f:
-        reader = csv.DictReader(f)
-        if not reader.fieldnames or "tx_node_id" not in reader.fieldnames or "chip_mac" not in reader.fieldnames:
-            raise ValueError(f"tx registry missing required columns (tx_node_id, chip_mac): {path}")
-
-        for line_no, row in enumerate(reader, start=2):
-            raw_id = (row.get("tx_node_id") or "").strip()
-            raw_mac = (row.get("chip_mac") or "").strip()
-            if not raw_id and not raw_mac:
-                continue
-            if not raw_id or not raw_mac:
-                raise ValueError(f"{path}:{line_no}: tx_node_id and chip_mac are required")
-
-            records.append(
-                TxRecord(
-                    tx_node_id=int(raw_id),
-                    board_name=(row.get("board_name") or "").strip(),
-                    chip_mac=normalize_mac(raw_mac),
-                    room_x_m=(row.get("room_x_m") or "").strip(),
-                    room_y_m=(row.get("room_y_m") or "").strip(),
-                    height_m=(row.get("height_m") or "").strip(),
-                    firmware_version=(row.get("firmware_version") or "").strip(),
-                    notes=(row.get("notes") or "").strip(),
-                )
-            )
-    return records
+    return [_from_row(row) for row in load_rows(TX_SPEC, path)]
 
 
 def build_tx_indexes(records: List[TxRecord]) -> Tuple[Dict[str, TxRecord], Dict[int, TxRecord]]:
@@ -105,56 +106,15 @@ def lookup_tx_by_node_id(tx_node_id: int, path: Path = DEFAULT_TX_REGISTRY_PATH)
 
 
 def verify_tx_registry(path: Path = DEFAULT_TX_REGISTRY_PATH) -> List[str]:
-    errors: List[str] = []
-    try:
-        records = load_tx_registry(path)
-    except (FileNotFoundError, ValueError) as exc:
-        return [str(exc)]
-
-    seen_ids: Dict[int, int] = {}
-    seen_macs: Dict[str, int] = {}
-    for idx, rec in enumerate(records, start=1):
-        if rec.tx_node_id in seen_ids:
-            errors.append(
-                f"duplicate tx_node_id {rec.tx_node_id} (rows {seen_ids[rec.tx_node_id]} and {idx})"
-            )
-        else:
-            seen_ids[rec.tx_node_id] = idx
-
-        if rec.chip_mac in seen_macs:
-            errors.append(f"duplicate chip_mac {rec.chip_mac} (rows {seen_macs[rec.chip_mac]} and {idx})")
-        else:
-            seen_macs[rec.chip_mac] = idx
-
-    return errors
+    return verify_rows(TX_SPEC, path)
 
 
 def suggest_next_tx_node_id(path: Path = DEFAULT_TX_REGISTRY_PATH) -> int:
-    if not path.exists():
-        return 1
-    records = load_tx_registry(path)
-    if not records:
-        return 1
-    return max(rec.tx_node_id for rec in records) + 1
+    return suggest_next_id(TX_SPEC, path)
 
 
 def save_tx_registry(records: List[TxRecord], path: Path = DEFAULT_TX_REGISTRY_PATH) -> None:
-    fieldnames = [
-        "tx_node_id",
-        "board_name",
-        "chip_mac",
-        "room_x_m",
-        "room_y_m",
-        "height_m",
-        "firmware_version",
-        "notes",
-    ]
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with path.open("w", encoding="utf-8", newline="") as f:
-        writer = csv.DictWriter(f, fieldnames=fieldnames)
-        writer.writeheader()
-        for rec in sorted(records, key=lambda r: r.tx_node_id):
-            writer.writerow(rec.as_csv_row())
+    save_rows(TX_SPEC, [rec.as_csv_row() for rec in records], path)
 
 
 # --- CLI ---
