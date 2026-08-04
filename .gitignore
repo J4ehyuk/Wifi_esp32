@@ -62,3 +62,6 @@ presentations/
 scripts/meshsense_config.json
 
 docs/
+
+# clangd 인덱스 캐시
+**/.cache/
