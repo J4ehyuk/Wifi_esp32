@@ -18,11 +18,8 @@ class MeshSenseConfig:
     ap_pass: str
     ap_channel: int
     ap_max_conn: int
-    ap_broadcast_port: int
-    ap_interval_ms: int
     ap_beacon_interval_tu: int
     ap_espnow_interval_ms: int
-    ap_payload_bytes: int
     collector_ip: str
     collector_port: int
     rx_espnow_only: bool
@@ -37,18 +34,14 @@ class MeshSenseConfig:
             f"-DCSI_ESPNOW_ONLY={1 if self.rx_espnow_only else 0}",
         ]
 
-    def tx_cmake_defines(self, tx_node_id: int) -> List[str]:
+    def tx_cmake_defines(self) -> List[str]:
         return [
             f"-DTX_AP_SSID={self.ap_ssid}",
             f"-DTX_AP_PASS={self.ap_pass}",
             f"-DTX_AP_CHANNEL={self.ap_channel}",
             f"-DTX_AP_MAX_CONN={self.ap_max_conn}",
-            f"-DTX_AP_BROADCAST_PORT={self.ap_broadcast_port}",
-            f"-DTX_AP_INTERVAL_MS={self.ap_interval_ms}",
             f"-DTX_AP_BEACON_INTERVAL_TU={self.ap_beacon_interval_tu}",
             f"-DTX_AP_ESPNOW_INTERVAL_MS={self.ap_espnow_interval_ms}",
-            f"-DTX_AP_PAYLOAD_BYTES={self.ap_payload_bytes}",
-            f"-DTX_AP_NODE_ID={tx_node_id}",
         ]
 
 
@@ -81,11 +74,8 @@ def _parse_unified(data: Dict[str, Any]) -> MeshSenseConfig:
         ap_pass=req_str(ap, "pass", "ap"),
         ap_channel=req_int(ap, "channel", "ap"),
         ap_max_conn=req_int(ap, "max_conn", "ap"),
-        ap_broadcast_port=req_int(ap, "broadcast_port", "ap"),
-        ap_interval_ms=req_int(ap, "interval_ms", "ap"),
         ap_beacon_interval_tu=int(ap.get("beacon_interval_tu", 100)),
         ap_espnow_interval_ms=int(ap.get("espnow_interval_ms", 10)),
-        ap_payload_bytes=req_int(ap, "payload_bytes", "ap"),
         collector_ip=req_str(collector, "ip", "collector"),
         collector_port=req_int(collector, "port", "collector"),
         rx_espnow_only=bool(rx.get("espnow_only", False)),

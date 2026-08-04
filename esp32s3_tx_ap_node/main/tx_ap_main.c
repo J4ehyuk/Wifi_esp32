@@ -2,18 +2,12 @@
 #include <stdbool.h>
 #include <stdio.h>
 #include <string.h>
-#include <unistd.h>
-#include <sys/socket.h>
-#include <netinet/in.h>
-#include <arpa/inet.h>
 
 #include "esp_event.h"
 #include "esp_log.h"
 #include "esp_mac.h"
 #include "esp_netif.h"
 #include "esp_now.h"
-#include "esp_system.h"
-#include "esp_timer.h"
 #include "esp_wifi.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
@@ -35,28 +29,12 @@
 #ifndef TX_AP_MAX_CONN
 #define TX_AP_MAX_CONN 4
 #endif
-#ifndef TX_AP_BROADCAST_PORT
-#define TX_AP_BROADCAST_PORT 3333
-#endif
-#ifndef TX_AP_INTERVAL_MS
-#define TX_AP_INTERVAL_MS 10
-#endif
 #ifndef TX_AP_BEACON_INTERVAL_TU
 #define TX_AP_BEACON_INTERVAL_TU 100
 #endif
 #ifndef TX_AP_ESPNOW_INTERVAL_MS
 #define TX_AP_ESPNOW_INTERVAL_MS 10
 #endif
-#ifndef TX_AP_PAYLOAD_BYTES
-#define TX_AP_PAYLOAD_BYTES 64
-#endif
-#ifndef TX_AP_NODE_ID
-#define TX_AP_NODE_ID 1
-#endif
-
-#define TX_PACKET_MAGIC 0x5458u /* "TX" */
-#define TX_PACKET_VERSION 1u
-
 static const uint8_t BROADCAST_MAC[ESP_NOW_ETH_ALEN] = {0xff, 0xff, 0xff, 0xff, 0xff, 0xff};
 
 /* 연결된 STA의 MAC을 ESP-NOW peer로 등록 → unicast로 보내 DTIM 게이팅 우회.
@@ -104,20 +82,7 @@ static void remove_sta_peer(const uint8_t *mac)
     }
 }
 
-typedef struct __attribute__((packed)) {
-    uint16_t magic;
-    uint8_t version;
-    uint8_t reserved0;
-    uint32_t session_id;
-    uint32_t tx_node_id;
-    uint32_t seq;
-    uint64_t timestamp_us;
-    uint16_t payload_len;
-    uint16_t reserved1;
-} tx_heartbeat_header_t;
-
 static const char *TAG = "TX_AP_NODE";
-static uint32_t g_udp_seq = 0;
 static uint32_t g_enow_seq = 0;
 static volatile uint32_t g_enow_ok = 0;
 static volatile uint32_t g_enow_fail = 0;
@@ -221,13 +186,6 @@ static void init_softap(void)
              ap_cfg.ap.authmode == WIFI_AUTH_OPEN ? "OPEN" : "WPA2");
 }
 
-static void fill_payload(uint8_t *payload, uint16_t payload_len, uint32_t seq)
-{
-    for (uint16_t i = 0; i < payload_len; ++i) {
-        payload[i] = (uint8_t)((seq + i) & 0xFFu);
-    }
-}
-
 /* ESP-NOW 브로드캐스트: RX CSI 콜백을 100Hz에 가깝게 유도 (L3 UDP보다 L2에 가까움) */
 static void esp_now_tx_task(void *arg)
 {
@@ -273,69 +231,10 @@ static void esp_now_tx_task(void *arg)
     }
 }
 
-/* 보조 L3 heartbeat (에어타임 점유 최소화를 위해 ESP-NOW보다 느리게 설정 가능) */
-static void tx_broadcast_task(void *arg)
-{
-    (void)arg;
-
-    int sock = socket(AF_INET, SOCK_DGRAM, IPPROTO_IP);
-    if (sock < 0) {
-        ESP_LOGE(TAG, "Failed to create UDP socket");
-        vTaskDelete(NULL);
-        return;
-    }
-
-    int broadcast_enable = 1;
-    setsockopt(sock, SOL_SOCKET, SO_BROADCAST, &broadcast_enable, sizeof(broadcast_enable));
-
-    struct sockaddr_in dst = {0};
-    dst.sin_family = AF_INET;
-    dst.sin_port = htons(TX_AP_BROADCAST_PORT);
-    dst.sin_addr.s_addr = inet_addr("192.168.4.255");
-
-    uint16_t payload_len = (TX_AP_PAYLOAD_BYTES < 8) ? 8 : TX_AP_PAYLOAD_BYTES;
-    uint8_t tx_buf[512];
-    if (sizeof(tx_buf) < sizeof(tx_heartbeat_header_t) + payload_len) {
-        ESP_LOGE(TAG, "TX buffer too small");
-        close(sock);
-        vTaskDelete(NULL);
-        return;
-    }
-
-    ESP_LOGI(TAG,
-             "UDP broadcast: :%d every %dms payload=%dB",
-             TX_AP_BROADCAST_PORT,
-             TX_AP_INTERVAL_MS,
-             payload_len);
-
-    while (1) {
-        tx_heartbeat_header_t hdr = {0};
-        hdr.magic = TX_PACKET_MAGIC;
-        hdr.version = TX_PACKET_VERSION;
-        hdr.session_id = 0;
-        hdr.tx_node_id = (uint32_t)TX_AP_NODE_ID;
-        hdr.seq = g_udp_seq++;
-        hdr.timestamp_us = (uint64_t)esp_timer_get_time();
-        hdr.payload_len = payload_len;
-
-        memcpy(tx_buf, &hdr, sizeof(hdr));
-        fill_payload(tx_buf + sizeof(hdr), payload_len, hdr.seq);
-        size_t packet_len = sizeof(hdr) + payload_len;
-
-        ssize_t sent = sendto(sock, tx_buf, packet_len, 0, (struct sockaddr *)&dst, sizeof(dst));
-        if (sent < 0) {
-            ESP_LOGW(TAG, "sendto failed");
-        }
-
-        vTaskDelay(pdMS_TO_TICKS(TX_AP_INTERVAL_MS));
-    }
-}
-
 void app_main(void)
 {
     ESP_ERROR_CHECK(nvs_flash_init());
     init_softap();
     init_esp_now();
     xTaskCreate(esp_now_tx_task, "esp_now_tx", 4096, NULL, 6, NULL);
-    xTaskCreate(tx_broadcast_task, "tx_udp", 4096, NULL, 4, NULL);
 }
