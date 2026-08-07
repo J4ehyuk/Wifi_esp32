@@ -1,7 +1,9 @@
-# UDP 패킷 스키마 (ESP32-S3 CSI → Mac)
+# UDP 패킷 스키마 v1 (경로 A: ESP32-S3 CSI → Mac)
 
-ESP32-S3 RX 노드가 Mac 수집기로 보내는 **MVP 바이너리 UDP 패킷** 규격입니다.  
+경로 A에서 ESP32-S3 RX 노드가 Mac 수집기로 보내는 **바이너리 UDP 패킷** 규격입니다.  
 구현 참고: [`esp32s3_csi_sender/main/csi_sender_main.c`](../../esp32s3_csi_sender/main/csi_sender_main.c), [`mac_collector/udp_collector_mvp.py`](../../mac_collector/udp_collector_mvp.py).
+
+> **v2와 혼동 주의**: 경로 B(USB 시리얼)는 같은 magic(`0x4353`)을 쓰지만 **32바이트 헤더의 별개 포맷(version=2, `tx_seq` 포함)** 입니다. 서로 호환되지 않으며, UDP 수집기는 version=1만 받습니다. v2 규격은 [csi-poc.md](../firmware/csi-poc.md)의 "바이너리 프레임 포맷" 절 참조.
 
 ## 1) 설계 목표
 

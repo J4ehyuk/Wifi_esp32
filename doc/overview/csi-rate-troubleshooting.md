@@ -152,6 +152,7 @@ collector가 device_id=101로 들어오는 패킷의 seq를 누적 카운팅하�
 - 또 한 가지 부수 발견: `POC_DUMP_CSV=1`(CSV 시리얼 출력)에서 cb가 ~46Hz로 떨어졌는데, 이건 921600 baud 시리얼이 ~50Hz의 ets_printf 처리 한계라 WiFi driver task 콜백을 백프레셔로 막은 것. **CSI 콜백 핸들러에서 동기 I/O는 절대 금지**.
 - **Phase 2 검증 완료 (2026-05-23)**: 바이너리 ring buffer + USB-Serial-JTAG 스트리밍으로 100Hz × 0% 손실 end-to-end 달성. [doc/firmware/csi-poc.md](../firmware/csi-poc.md) 참조. 디버깅 중 발견: ESP32-S3 dev 보드 USB-C는 UART0가 아니라 USB-Serial-JTAG 페리페럴 — 처음에 `uart_write_bytes`를 썼더니 데이터가 물리 핀으로 나가 USB로 안 보였음.
 - 별도 이슈: seq_drop 음수 → device_id 충돌 가능성, 보드별 ID 분리 + collector 측 boot_session 구분 로직 필요.
+- **추기 (2026-05-23, 커밋 `237dd75`)**: 위 결론에 언급된 PoC의 HT40 설정은 이후 **HT20으로 전환**됨 (64 서브캐리어 모델 입력에 맞추기 위해 raw 128B로 축소). 100Hz 달성에는 영향 없음. 현재 설정은 [csi-poc.md](../firmware/csi-poc.md) 참조.
 
 ---
 

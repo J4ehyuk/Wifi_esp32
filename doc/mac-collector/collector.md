@@ -1,6 +1,8 @@
-# Mac Collector
+# Mac Collector (경로 A — UDP)
 
-`mac_collector/udp_collector_mvp.py` — ESP32-S3 RX가 보낸 CSI UDP 패킷을 검증하고 JSONL로 저장합니다.
+`mac_collector/udp_collector_mvp.py` — 경로 A에서 ESP32-S3 RX가 보낸 CSI UDP 패킷을 검증하고 JSONL로 저장합니다.
+
+> 경로 B(AP 없는 USB 시리얼)는 이 수집기 대신 **`scripts/csi_serial_reader.py`를 RX 보드당 1개씩** 실행합니다. 출력 폴더 구조는 같고 JSONL에 `tx_seq` 등 필드가 추가됩니다. 상세: [csi-poc.md](../firmware/csi-poc.md), 실행은 `meshsense_cli` 메뉴 **[6]** 권장.
 
 ## 관련 파일
 
@@ -51,12 +53,15 @@ mac_collector_output/
         device_<device_id>.jsonl
 ```
 
-JSONL 1줄(레코드) 주요 필드:
+JSONL 1줄(레코드) 필드 (쓰는 순서대로):
 
-- `received_at_unix_us`
-- `session_id` (yaml SSOT), `firmware_session_id` (패킷, 0), `device_id`, `seq`, `timestamp_us`
-- `channel`, `rssi_dbm`, `noise_floor_dbm`
-- `sample_count`, `csi_amp`
+- `received_at_unix_us` — Mac 수신 시각 (µs)
+- `source_ip`, `source_port` — 보낸 RX의 주소
+- `session_id` (yaml SSOT), `firmware_session_id` (패킷 값, 항상 0), `device_id`, `seq`, `timestamp_us` (RX 부팅 기준 µs)
+- `channel`, `rssi_dbm`, `noise_floor_dbm` (경로 A 펌웨어는 항상 -128 = 미측정)
+- `sample_count`, `csi_amp` (전처리 완료 float 배열)
+
+파일은 append 모드로 열립니다. **같은 날짜에 같은 `session_id`로 다시 수집하면 기존 파일 뒤에 이어 붙으므로**, run을 새로 시작할 때는 `session_id`를 올리세요.
 
 ## 제공 기능 (MVP)
 

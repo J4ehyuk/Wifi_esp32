@@ -1,6 +1,6 @@
-# esp-csi 베이스 PoC (Phase 1)
+# esp-csi 베이스 펌웨어 — 경로 B (AP 없는 USB 시리얼)
 
-`csi-rate-troubleshooting.md`에서 결정한 esp-csi 공식 예제 기반 PoC. **MeshSense 프로토콜 통합 없음**, 100Hz CSI 콜백 달성 자체를 검증하기 위한 최소 펌웨어.
+`csi-rate-troubleshooting.md`에서 결정한 esp-csi 공식 예제 기반 펌웨어입니다. 경로 A(UDP/AP)의 22Hz 병목을 제거하기 위해 AP 접속 자체를 없앤 구성으로, **Phase 1(100Hz 콜백 검증)과 Phase 2(USB 시리얼 스트리밍)를 모두 통과해 현재 데이터 수집의 주 경로**로 쓰입니다. 전체 구조에서의 위치는 [architecture.md](../overview/architecture.md) 참조.
 
 ## 디렉터리
 
@@ -19,9 +19,9 @@
 
 - **AP/STA association 없음**. 양쪽 보드 모두 `WIFI_MODE_STA`.
 - 양쪽 보드의 STA MAC을 `1a:00:00:00:00:00`로 **임의 덮어씀** (`esp_wifi_set_mac`). RX는 이 MAC에서 온 frame만 CSI 통과시킴.
-- 채널 11 고정, **HT40 (BELOW)** 강제. ESP-NOW peer rate `HT40 MCS0 LGI`.
+- 채널 11 고정, **HT20** (초기엔 HT40이었으나 2026-05 커밋 `237dd75`에서 전환 — 위 "upstream과의 차이" 참조). ESP-NOW peer rate `HT20 MCS0 LGI`. 대역폭을 되돌리려면 양쪽 `app_main.c`의 `CONFIG_WIFI_BANDWIDTH`/`CONFIG_ESP_NOW_PHYMODE` 매크로 수정.
 - ESP-NOW broadcast (`ff:ff:ff:ff:ff:ff`), `esp_now_set_pmk` 호출 (encrypt=false라 키는 비활성이지만 호출 패턴 보존).
-- 송신 주기 `usleep(10ms)`, FreeRTOS HZ=1000 (1ms tick).
+- 송신 주기 `usleep(10ms)`. FreeRTOS tick은 send_poc sdkconfig가 1000Hz(1ms), recv_poc sdkconfig는 100Hz.
 
 ## 빌드
 
@@ -166,7 +166,7 @@ python scripts/csi_serial_reader.py --port /dev/cu.usbmodem301 --device-id 103 -
 # 같은 ESP-NOW frame을 동시에 받은 3보드의 CSI가 한 row로 묶임
 ```
 
-후처리(`add/main.py`)는 현재 `seq` 기준으로 동작 중인데, multi-RX 텐서 생성을 위해서는 `tx_seq` join 로직 추가가 필요. Phase 3 마무리 시 같이 처리.
+`tx_seq` 기준 정렬·윈도잉은 [`model_train/model/Preprocessing.py`](../postprocessing/model-training.md)에 구현되어 있습니다 (2026-05-25, LSTM 학습 파이프라인). 단 현재 설정은 RX 1대(`RX_IDS=[102]`) 기준이라 multi-RX 결합은 `RX_IDS` 확장 + `INPUT_SIZE` 수정이 필요합니다. 기존 `add/main.py`는 여전히 수신 시각 기준입니다.
 
 ### ESP_LOG와 바이너리 스트림이 같은 USB-CDC를 공유하는 이슈
 
@@ -186,21 +186,23 @@ ESP32-S3 dev 보드 USB-C 포트는 **UART0가 아니라 USB-Serial-JTAG 페리�
 
 - 구간 변화량: 500 frames / 5초 = **100Hz** 정확.
 - `invalid=0`, `seq_drop=0` — 전 파이프라인 손실 0%.
-- `last_raw_len=384` — HT40 LTF 384바이트 raw CSI 그대로 전달.
+- `last_raw_len=384` — HT40 LTF 384바이트 raw CSI 그대로 전달. (**당시 HT40 설정 기준 측정.** 이후 HT20 + LLTF only로 전환해 현재는 raw 128B = 64 서브캐리어)
 - `hz_avg`가 90~95대인 건 reader 시작 시 초기 부팅/스캔 지연이 평균에 섞인 것; steady-state는 100Hz.
 - `tx_seq` 단조 증가 (+512, +516 / 5초) — TX→RX→USB→Mac 동기화 정상.
 
 **MeshSense baseline 22Hz → 100Hz, 4.5배 개선, 0% 손실.** Phase 2 검증 완료.
 
-## 기대치
+## 기대치 (Phase 1 시작 전 기록 — 결과적으로 달성됨)
 
 upstream esp-csi는 ESP32-S3 보드에서 100Hz를 안정적으로 달성한다고 보고됨. 우리 환경에서도 동일하게 나오면:
-- 토폴로지(AP/association 제거, 채널 강제, HT40, MCS0 OFDM 강제)가 핵심이라는 것이 입증됨
+- 토폴로지(AP/association 제거, 채널 강제, 대역폭·MCS0 OFDM rate 강제 — 당시 HT40, 현재 HT20)가 핵심이라는 것이 입증됨
 - 다음 Phase 2: 이 베이스에 MeshSense UDP 패킷 스키마 + device_registry + session_meta 통합
 
 만약 동일 환경에서도 100Hz가 안 나오면:
 - 보드 하드웨어 문제 가능성 (안테나, RF 부)
 - ESP-IDF v5.2.2 wifi lib 회귀 가능성 → v5.1 또는 esp-csi 권장 버전(v5.5.0)으로 다운그레이드 검토
+
+→ 실제 결과: Phase 1 평균 97.5Hz, Phase 2 100Hz·손실 0% (위 실측 절 참조). 데이터 전송은 UDP 통합 대신 USB 시리얼 방식으로 확정.
 
 ## 참고
 
