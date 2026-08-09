@@ -82,6 +82,9 @@ sample_count = raw_len / 2
 
 다중 RX 학습 입력은 `tx_seq`를 join key로 사용한다.
 
+인접 값의 증가·누락·감소 패턴과 실제 데이터셋 집계는
+[`seq`와 `tx_seq` 패턴 기준](sequence-patterns.md)을 따른다.
+
 ## 5. JSONL record schema v1
 
 Reader는 frame 하나를 JSON object 한 줄로 저장한다.

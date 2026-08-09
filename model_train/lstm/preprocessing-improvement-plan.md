@@ -4,6 +4,7 @@
 > 대상 데이터: `mac_collector_output/raw/20260616/session_1` ~ `session_30`
 > 관련 현재 코드: [`Preprocessing.py`](Preprocessing.py)
 > 기존 전처리 설명: [`preprocessing.md`](preprocessing.md)
+> 순번 판정 기준: [`seq`와 `tx_seq` 패턴](../../doc/sequence-patterns.md)
 
 ## 1. 목적
 

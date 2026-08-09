@@ -3,6 +3,7 @@
 > 상태: **EXPERIMENTAL**
 > 구현: [`Preprocessing.py`](Preprocessing.py)
 > 입력 계약: [JSONL record schema](../../doc/data-schema.md)
+> 순번 판정 기준: [`seq`와 `tx_seq` 패턴](../../doc/sequence-patterns.md)
 > 3-RX 개선 제안: [`preprocessing-improvement-plan.md`](preprocessing-improvement-plan.md)
 
 이 문서의 1~5절은 현재 `Preprocessing.py`가 실제로 만드는 변수와 배열 형태를
