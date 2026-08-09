@@ -1,0 +1,334 @@
+# LSTM 모델 설계와 학습
+
+> 상태: **EXPERIMENTAL**
+> 구현: [`LSTM.py`](LSTM.py)
+> 전처리 입력: [LSTM 전처리](preprocessing.md)
+
+이 문서는 현재 `LSTM.py`가 `X`, `y`를 Tensor로 바꿔 학습하는 과정을 설명한다.
+
+## 1. 전처리 입력
+
+현재 전처리는 다음 NumPy 배열을 만든다.
+
+```text
+X: float64, shape (N, 300, 52)
+y: int64,   shape (N,)
+```
+
+| 기호 | 의미 |
+|---|---|
+| `N` | window 개수 |
+| `300` | 3초 × 100Hz의 시간 sample 수 |
+| `52` | 현재 RX 1개에서 사용하는 amplitude feature 수 |
+| `y[i]` | `X[i]` window의 class 번호 |
+
+`LSTM.py`의 `from Preprocessing import ...`는 전처리 파일을 실행해 이 배열을
+메모리에 만든 뒤 가져온다.
+
+## 2. Tensor와 batch 형태
+
+`make_dataloader()`는 배열을 PyTorch Tensor로 바꾼다.
+
+```text
+x_tensor: float32, shape (N, 300, 52)
+y_tensor: int64/torch.long, shape (N,)
+```
+
+`DataLoader`의 batch size는 32다. 마지막 batch는 32보다 작을 수 있다.
+
+```text
+batch_x: float32, shape (B, 300, 52)
+batch_y: int64,   shape (B,)
+
+1 ≤ B ≤ 32
+```
+
+`batch_y`가 `torch.long`인 이유는 `CrossEntropyLoss`가 class 번호 target을 이
+type으로 받기 때문이다.
+
+## 3. 모델 구조와 shape
+
+```text
+batch_x (B, 300, 52)
+  │
+  ▼
+2-layer LSTM
+  input_size=52, hidden_size=128, batch_first=True
+  │
+  ▼
+lstm_out (B, 300, 128)
+  │ 마지막 시점만 선택
+  ▼
+last_step (B, 128)
+  │
+  ▼
+Dropout(p=0.2)
+  │
+  ▼
+Linear(128, 3)
+  │
+  ▼
+logits (B, 3)
+```
+
+각 축의 의미:
+
+| 변수 | shape | 의미 |
+|---|---|---|
+| `batch_x` | `(B, 300, 52)` | B개의 CSI window |
+| `lstm_out` | `(B, 300, 128)` | 각 시간 sample의 LSTM 출력 |
+| `last_step` | `(B, 128)` | 각 window 마지막 sample의 대표 feature |
+| `logits` | `(B, 3)` | class 0, 1, 2의 점수 |
+
+`logits`는 확률이 아니라 softmax 이전 점수다. 학습에서는 softmax를 직접
+적용하지 않고 `CrossEntropyLoss`에 그대로 전달한다.
+
+## 4. 현재 설정
+
+| 상수 | 값 | 의미 |
+|---|---:|---|
+| `INPUT_SIZE` | 52 | 한 시간 sample의 feature 수 |
+| `HIDDEN_SIZE` | 128 | LSTM 내부 feature 크기 |
+| `NUM_LAYERS` | 2 | 쌓은 LSTM 층 수 |
+| `NUM_CLASSES` | 3 | `empty`, `static`, `action` |
+| `DROPOUT` | 0.2 | 마지막 LSTM feature에 적용할 dropout 비율 |
+| `BATCH_SIZE` | 32 | 한 번에 학습할 window 수 |
+| `LEARNING_RATE` | 0.001 | Adam update 크기 |
+| `EPOCHS` | 20 | 전체 train data 반복 횟수 |
+
+현재 `INPUT_SIZE=52`는 전처리의 `R=1`, `N_SUB=52`와 맞는다. RX를 여러 대로
+바꿔 `X.shape[2]`가 달라지면 이 상수도 함께 바꾸지 않으면 LSTM 입력 오류가
+난다.
+
+## 5. 학습 loop
+
+학습 장치는 CUDA가 있으면 CUDA, 없고 Apple MPS가 있으면 MPS, 둘 다 없으면
+CPU를 선택한다.
+
+각 batch에서 실행되는 순서:
+
+1. `batch_x`, `batch_y`를 선택된 장치로 이동한다.
+2. `logits = model(batch_x)`로 `(B, 3)` 점수를 만든다.
+3. `loss = CrossEntropyLoss(logits, batch_y)`로 scalar loss 하나를 만든다.
+4. `optimizer.zero_grad()`로 이전 gradient를 비운다.
+5. `loss.backward()`로 gradient를 계산한다.
+6. `optimizer.step()`으로 Adam이 모델 파라미터를 갱신한다.
+7. batch별 loss와 `logits.argmax(dim=1)` 기반 정답 수를 누적한다.
+
+epoch 끝에는 다음 train 지표만 출력한다.
+
+```text
+average loss = 모든 batch loss의 sample 수 가중 평균
+accuracy     = train 정답 수 / train sample 수
+```
+
+현재 모든 window의 label이 `empty=0`으로 고정될 수 있으므로, 이 train accuracy는
+일반화 성능을 뜻하지 않는다.
+
+## 6. 학습 후 출력 확인
+
+`print_sample_predictions()`는 train data 앞쪽 최대 5개를 다시 모델에 넣는다.
+
+```text
+sample_x: (S, 300, 52), S ≤ 5
+logits:   (S, 3)
+softmax:  (S, 3)
+predict:  (S,)
+```
+
+여기서만 사람이 보기 위한 확률을 만들기 위해 softmax를 사용한다. 이 출력은
+validation/test 평가가 아니다.
+
+## 7. 실행과 현재 한계
+
+현재 import가 같은 디렉터리의 `Preprocessing.py`를 찾도록 되어 있으므로 다음
+위치에서 실행해야 한다.
+
+```bash
+cd model_train/lstm
+python3 LSTM.py
+```
+
+현재 한계:
+
+- 단일 session의 window를 shuffle해 train에만 사용한다.
+- validation/test loader가 없다.
+- best checkpoint, 모델 파일, optimizer state를 저장하지 않는다.
+- confusion matrix와 class별 지표가 없다.
+- `LABEL_NAME`, `LABEL`, `SPLIT`이 source에 고정될 수 있다.
+
+따라서 현재 코드는 모델 shape와 학습 loop를 확인하는 prototype이며, 성능 평가나
+재현 가능한 학습 pipeline은 아니다.
+
+## 8. 계획
+
+### Multi-RX 입력
+
+RX 3대를 결합할 때 목표 shape는 다음과 같다.
+
+```text
+X: (N, 300, 192)
+192 = 3 RX × 64 features
+```
+
+이는 현재 구현이 아니다. 구현할 때는 RX device order와 subcarrier mapping을
+tensor metadata에 함께 저장하고, `INPUT_SIZE`를 `RX 수 × feature 수`로 계산해야
+한다.
+
+### 학습 완료 조건
+
+- session 단위 train/validation/test 분리
+- validation loss/accuracy
+- validation 기준 best checkpoint
+- 독립 test evaluation과 confusion matrix
+- class와 session 수 보고
+- model과 preprocessing metadata 함께 저장
+
+## 9. PLANNED: 20260616 학습부터 테스트까지
+
+### 9.1 전체 실행 순서
+
+```text
+30개 session 확인
+  → 품질 검사
+  → session 단위 train/validation/test manifest 고정
+  → split별 전처리
+  → train 통계로 normalization
+  → LSTM 학습
+  → validation으로 모델 선택
+  → 설정 고정
+  → test 1회 평가
+  → 모델·지표·metadata 저장
+```
+
+전처리와 split 상세는 [LSTM 전처리의 20260616 dataset 구성](preprocessing.md#6-planned-20260616-dataset-구성)을 따른다.
+
+### 9.2 Baseline 모델
+
+첫 20260616 baseline은 현재 LSTM 층 구성을 유지하되, 전처리 계획에 맞춰 세 RX
+feature를 입력한다. 현재 구현의 `INPUT_SIZE=52`는 구현 단계에서 192로
+변경해야 한다.
+
+```text
+input: (B, 300, 192)
+LSTM: input size 192, 2 layers, hidden size 128
+Dropout: 0.2
+Linear: 128 → 3
+class: empty / static / motion
+```
+
+학습 시작 설정:
+
+| 항목 | 계획값 |
+|---|---:|
+| batch size | 32 |
+| optimizer | Adam |
+| learning rate | 0.001 |
+| loss | CrossEntropyLoss |
+| 최대 epoch | 50 |
+| random seed | 고정값 1개를 manifest에 기록 |
+| model selection | validation macro-F1 최대 |
+
+50 epoch는 최대값이며, validation macro-F1이 일정 epoch 동안 개선되지 않으면
+early stopping하는 방식으로 계획한다. patience 값은 구현 시 설정 파일에 명시한다.
+
+### 9.3 DataLoader
+
+```text
+train loader:      shuffle=True
+validation loader: shuffle=False
+test loader:       shuffle=False
+```
+
+train/validation/test는 서로 다른 session에서 생성된 window만 포함해야 한다.
+품질 검사 때문에 class별 window 수가 달라지면 train split에만 class weight를
+적용할지 결정한다. Validation과 test 분포는 인위적으로 oversampling하지 않는다.
+
+### 9.4 학습과 validation
+
+각 epoch에서:
+
+1. train loader로 forward, loss, backward, optimizer update를 수행한다.
+2. train loss와 accuracy를 기록한다.
+3. gradient 없이 validation loader 전체를 평가한다.
+4. validation loss, accuracy, macro-F1, class별 recall을 기록한다.
+5. validation macro-F1이 가장 높을 때 checkpoint를 저장한다.
+
+Checkpoint에는 다음을 함께 저장한다.
+
+```text
+model_state_dict
+optimizer_state_dict
+epoch
+validation metrics
+class_map
+model config
+preprocessing config
+normalization stats reference
+dataset manifest reference
+source commit
+random seed
+```
+
+Accuracy만으로 모델을 고르지 않는다. 세 class 중 한 class에 치우친 모델을
+구분하기 위해 macro-F1과 class별 recall을 함께 사용한다.
+
+### 9.5 Hyperparameter 조정 범위
+
+Hyperparameter 비교는 train과 validation만 사용한다.
+
+초기 비교 후보:
+
+- hidden size: 64, 128
+- LSTM layers: 1, 2
+- dropout: 0.2, 0.5
+- learning rate: 0.001, 0.0003
+
+모든 조합을 무조건 학습하기보다 baseline 결과를 본 뒤 필요한 항목만 비교한다.
+Test 결과를 보고 hyperparameter를 다시 고르면 test leakage이므로 금지한다.
+
+### 9.6 최종 test
+
+모델 구조, 전처리 설정, normalization, checkpoint 선택 기준을 모두 고정한 뒤
+test split을 한 번 평가한다.
+
+최종 보고 지표:
+
+- window-level accuracy
+- macro precision, macro recall, macro-F1
+- class별 precision, recall, F1
+- 3×3 confusion matrix
+- session별 accuracy와 macro-F1
+- 각 class/session의 window 수
+
+Window가 많이 겹치므로 window-level 결과만으로 결론 내리지 않는다. 같은
+session의 window 예측을 평균 확률 또는 majority vote로 합친 session-level 결과도
+함께 보고한다. 합치는 방식은 test 실행 전에 고정한다.
+
+### 9.7 최종 산출물
+
+```text
+runs/<run-id>/
+├── config.yaml
+├── dataset-manifest.yaml
+├── best-model.pt
+├── history.jsonl
+├── validation-metrics.json
+├── test-metrics.json
+├── confusion-matrix.png
+└── test-predictions.jsonl
+```
+
+`test-predictions.jsonl`에는 window별 session ID, 시작 `tx_seq`, 정답, 예측,
+class별 확률을 저장해 잘못 분류된 구간을 다시 추적할 수 있게 한다.
+
+### 9.8 완료 조건
+
+- session 22의 RX 102 상태를 해결하거나 제외 정책을 manifest에 기록했다.
+- train/validation/test session이 겹치지 않는다.
+- class map이 `empty=0`, `static=1`, `motion=2`로 통일됐다.
+- normalization은 train data로만 계산됐다.
+- validation 기준 best checkpoint를 저장했다.
+- test는 설정 고정 후 한 번만 실행했다.
+- window-level과 session-level 결과를 모두 저장했다.
+- model, preprocessing, dataset, source version을 함께 재현할 수 있다.

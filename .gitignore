@@ -55,10 +55,10 @@ dist/
 mac_collector_output/
 mac_collector/flash_state.json
 
+# --- 로컬 질의응답 기록 (Git에 올리지 않음) ---
+doc/qa-log.md
+
 # --- 발표·보고 (presentations/로 이동) ---
 presentations/
-
-# --- 플래시 스크립트 로컬 설정 ---
-scripts/meshsense_config.json
 
 docs/
