@@ -11,12 +11,13 @@
 | 3 | [펌웨어](firmware.md) | **CURRENT** — TX/RX 동작과 상수 |
 | 4 | [binary/JSONL 계약](data-schema.md) | **CURRENT CONTRACT** — frame과 record schema |
 | 5 | [`seq`와 `tx_seq` 패턴](sequence-patterns.md) | **CURRENT** — 두 순번의 차이·이상 패턴·실데이터 집계 |
-| 6 | [후처리](postprocessing.md) | **CURRENT + EXPERIMENTAL** — 수집률·시각화와 모델 문서 연결 |
-| 7 | [호스트 스크립트](../scripts/README.md) | **CURRENT** — CLI와 도구 책임 |
-| 8 | [문제 해결](troubleshooting.md) | **CURRENT** — ESP-IDF·빌드·포트 문제 |
-| 9 | [문서 주도 개발 규칙](documentation-policy.md) | **PROCESS CONTRACT** |
-| 10 | [ADR-0001](adr-poc-only.md) | **ACCEPTED** — PoC 단일 경로 결정 |
-| 11 | [모델 실험 문서](../model_train/README.md) | **EXPERIMENTAL** — 모델별 전처리·설계·학습 문서 |
+| 6 | [`seq`·`tx_seq` 전처리 레포트](seq-txseq-preprocessing-report.md) | **PLANNED** — 두 순번 기준 전처리 권고안 종합 레포트 (판정 규칙·임계값·근거) |
+| 7 | [후처리](postprocessing.md) | **CURRENT + EXPERIMENTAL** — 수집률·시각화와 모델 문서 연결 |
+| 8 | [호스트 스크립트](../scripts/README.md) | **CURRENT** — CLI와 도구 책임 |
+| 9 | [문제 해결](troubleshooting.md) | **CURRENT** — ESP-IDF·빌드·포트 문제 |
+| 10 | [문서 주도 개발 규칙](documentation-policy.md) | **PROCESS CONTRACT** |
+| 11 | [ADR-0001](adr-poc-only.md) | **ACCEPTED** — PoC 단일 경로 결정 |
+| 12 | [모델 실험 문서](../model_train/README.md) | **EXPERIMENTAL** — 모델별 전처리·설계·학습 문서 |
 
 ## 문서 상태 규칙
 
