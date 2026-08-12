@@ -11,7 +11,7 @@ MeshSense에서는 코드가 동작해도 문서가 현재 상태를 설명하�
 
 ```text
 요구사항
-  → 문서의 CURRENT/CONTRACT/PLANNED 변경
+  → 문서의 CURRENT/CONTRACT/OFFICIAL DESIGN/PLANNED 변경
   → 구현
   → 검증
   → 문서-코드 대조
@@ -27,12 +27,17 @@ MeshSense에서는 코드가 동작해도 문서가 현재 상태를 설명하�
 |---|---|
 | `CURRENT` | 현재 code로 실행되는 동작 |
 | `CURRENT CONTRACT` | producer/consumer가 함께 지키는 형식 |
+| `OFFICIAL DESIGN` | 아직 구현 전일 수 있지만 앞으로 구현할 공식 기준 |
+| `SUPPORTING ANALYSIS` | 공식 설계의 근거가 되는 데이터 분석·해설 |
 | `EXPERIMENTAL` | 실행 코드는 있으나 공식 pipeline이 아님 |
 | `PLANNED` | 설계만 있고 아직 구현되지 않음 |
 | `HISTORICAL` | 과거 실험·결정 기록 |
 | `ACCEPTED` | 채택된 architecture decision |
 
 현재값과 과거값을 같은 표의 “현재 설정”으로 섞지 않는다.
+
+`model_train/docs/`의 파일명은 `카테고리-내용.md` 형식의 한글 이름을 사용한다.
+예: `전처리-설계.md`, `모델-비교와-선정.md`.
 
 ## 3. 변경별 선행 문서
 
@@ -42,7 +47,7 @@ MeshSense에서는 코드가 동작해도 문서가 현재 상태를 설명하�
 | TX/RX RF·CSI 설정 | `firmware.md` |
 | binary header/JSONL field | `data-schema.md` |
 | flash·수집 실행 순서 | `quickstart.md`, `scripts/README.md` |
-| window/feature/label/split | `model_train/<model-name>/preprocessing.md`, `model-design-and-training.md` |
+| window/feature/label/split | `model_train/docs/`의 전처리·모델 설계 문서 |
 | 개발 방식/완료 조건 | 이 문서 |
 
 ## 4. Data contract 변경
@@ -103,6 +108,7 @@ ADR은 Context, Decision, Consequences, Status를 포함한다. 채택된 결정
 - frame/record field: serial frame schema
 - 실행 순서: quickstart
 - firmware 상수: firmware document
-- 모델 현재값: `model_train/<model-name>/`의 전처리·모델 문서
+- 공식 전처리 설계: `model_train/docs/전처리-설계.md`
+- 모델 현재값: `model_train/docs/`의 모델별 문서
 
 다른 문서는 상세값을 복사하기보다 canonical 문서에 링크한다.

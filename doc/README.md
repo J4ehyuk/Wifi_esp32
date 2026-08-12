@@ -11,18 +11,20 @@
 | 3 | [펌웨어](firmware.md) | **CURRENT** — TX/RX 동작과 상수 |
 | 4 | [binary/JSONL 계약](data-schema.md) | **CURRENT CONTRACT** — frame과 record schema |
 | 5 | [`seq`와 `tx_seq` 패턴](sequence-patterns.md) | **CURRENT** — 두 순번의 차이·이상 패턴·실데이터 집계 |
-| 6 | [`seq`·`tx_seq` 전처리 레포트](seq-txseq-preprocessing-report.md) | **PLANNED** — 두 순번 기준 전처리 권고안 종합 레포트 (판정 규칙·임계값·근거) |
+| 6 | [공식 전처리 설계](../model_train/docs/%5B전처리%5D-설계.md) | **OFFICIAL DESIGN** — 모든 모델이 공유하는 3-RX 전처리 기준 |
 | 7 | [후처리](postprocessing.md) | **CURRENT + EXPERIMENTAL** — 수집률·시각화와 모델 문서 연결 |
 | 8 | [호스트 스크립트](../scripts/README.md) | **CURRENT** — CLI와 도구 책임 |
 | 9 | [문제 해결](troubleshooting.md) | **CURRENT** — ESP-IDF·빌드·포트 문제 |
 | 10 | [문서 주도 개발 규칙](documentation-policy.md) | **PROCESS CONTRACT** |
 | 11 | [ADR-0001](adr-poc-only.md) | **ACCEPTED** — PoC 단일 경로 결정 |
-| 12 | [모델 실험 문서](../model_train/README.md) | **EXPERIMENTAL** — 모델별 전처리·설계·학습 문서 |
+| 12 | [모델 학습 문서](../model_train/docs/%5B문서%5D-목록.md) | **EXPERIMENTAL** — 전처리·모델 비교·설계·학습 문서 |
 
 ## 문서 상태 규칙
 
 - **CURRENT**: 현재 source code로 실행되는 동작만 기술합니다.
 - **CURRENT CONTRACT**: producer와 consumer가 반드시 함께 지켜야 하는 형식입니다.
+- **OFFICIAL DESIGN**: 아직 구현 전일 수 있지만 앞으로 구현할 공식 기준입니다.
+- **SUPPORTING ANALYSIS**: 공식 설계의 근거가 되는 데이터 분석·해설입니다.
 - **PLANNED**: 아직 구현되지 않았으며 실행 가능한 기능처럼 쓰지 않습니다.
 - **HISTORICAL**: 과거 기록입니다. 현재 설정과 같은 표에 섞지 않습니다.
 
@@ -36,7 +38,8 @@ Wifi_esp32/
 ├── esp32s3_csi_recv_poc/        공식 CSI/USB RX firmware
 ├── scripts/                     flash·registry·reader·visualization CLI
 ├── mac_collector/               registry·session metadata 보관
-├── model_train/                 실험 단계 preprocessing/LSTM
+├── model_train/                 실험 단계 모델 코드
+│   └── docs/                    전처리·모델 설계·학습 문서
 ├── mac_collector_output/        수집 결과 (git 제외)
 └── log/                         reader 로그 (git 제외)
 ```

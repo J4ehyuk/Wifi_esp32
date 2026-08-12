@@ -231,17 +231,18 @@ RX   START   END     SPAN   OBSERVED  MISSING  RATIO   MAX_GAP
 
 ## 5. EXPERIMENTAL: 모델별 전처리와 학습
 
-모델 실험은 `model_train/<model-name>/`에서 관리한다. 각 모델 디렉터리에는
-전처리 문서와 모델 설계·학습 문서를 둔다.
+모델 실행 코드는 `model_train/<model-name>/`, 전처리·설계·학습 문서는
+`model_train/docs/`에서 관리한다.
 
 현재 LSTM 실험:
 
-- [LSTM 전처리](../model_train/lstm/preprocessing.md)
-- [LSTM 모델 설계와 학습](../model_train/lstm/model-design-and-training.md)
+- [공식 전처리 설계](../model_train/docs/%5B전처리%5D-설계.md)
+- [LSTM 현재 전처리 구현](../model_train/docs/%5B전처리%5D-현재%20구현.md)
+- [LSTM 모델 설계와 학습](../model_train/docs/%5B모델%5D-장단기메모리%20설계와%20학습.md)
 
 현재 구현은 단일 session·단일 RX·hardcoded path/label을 사용하는
 **EXPERIMENTAL** prototype이다. 공식 preprocessing/학습 pipeline으로 취급하지
 않는다.
 
-다른 모델을 추가할 때도 같은 구조를 사용한다. 전체 목록은
-[model_train 문서](../model_train/README.md)를 참조한다.
+다른 모델을 추가할 때도 코드와 문서를 분리한다. 전체 목록은
+[model_train 문서](../model_train/docs/%5B문서%5D-목록.md)를 참조한다.

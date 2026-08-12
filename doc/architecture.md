@@ -30,7 +30,8 @@ Mac
              │
              ├─ session_meta_snapshot.yaml
              ├─ visualize_csi.py → csi_waterfall.png
-             └─ model_train/<model-name>/ (experimental)
+             ├─ model_train/<model-name>/ (experimental code)
+             └─ model_train/docs/ (preprocessing·training documents)
 ```
 
 다음 경로는 지원하지 않는다.
@@ -196,7 +197,7 @@ Frame과 JSONL field는 [serial frame schema](data-schema.md)가 유일한 data 
 | run ID와 label/환경 | `session_meta.yaml` |
 | RF channel/bandwidth/rate | TX/RX firmware source constants |
 | binary frame | `serial-frame-schema.md` + producer/reader constants |
-| 모델 window/feature | `model_train/<model-name>/` 문서·코드 — experimental |
+| 모델 window/feature | `model_train/docs/` 문서와 `model_train/<model-name>/` 코드 — experimental |
 
 RF 설정은 현재 compile-time constant다. 별도의 network configuration file은 없다.
 
@@ -207,9 +208,9 @@ RF 설정은 현재 compile-time constant다. 별도의 network configuration fi
 - `visualize_csi.py`: 각 RX를 Mac 수신 시각 기준 100Hz grid로 독립 보간해 PNG 생성
 - `measure_csi_hz.py`: 마지막 재부팅 이후 RX `timestamp_us` 기준 수집률·gap·sequence 진단
 
-`model_train/<model-name>/`은 실험 단계다. 단일 RX·단일 session·hardcoded
-path/label이며 CLI pipeline에 연결되지 않았다. 모델별 현재 상태와 목표는 각
-모델 디렉터리의 전처리·모델 문서에 기록한다.
+`model_train/<model-name>/`의 코드는 실험 단계다. 단일 RX·단일 session·hardcoded
+path/label이며 CLI pipeline에 연결되지 않았다. 모델별 현재 상태와 목표는
+`model_train/docs/`의 전처리·모델 문서에 기록한다.
 
 ## 10. 아키텍처 변경으로 취급하는 항목
 
