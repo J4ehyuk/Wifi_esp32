@@ -22,6 +22,7 @@ scripts/csi_serial_reader.py (RX별 process)
   binary v2 → I/Q amplitude → JSONL
        │
        ├─ scripts/visualize_csi.py
+       ├─ model_train/preprocessing/preprocess_3rx.py (official 3-RX windows)
        └─ model_train/lstm/Preprocessing.py → LSTM.py (experimental)
 ```
 
@@ -39,6 +40,7 @@ SoftAP/UDP production firmware, UDP collector, `flash_rx.py`, `flash_tx.py`, `me
 | `mac_collector/tx_registry.csv` | TX USB MAC ↔ TX node ID |
 | `mac_collector/session_meta.yaml` | run ID와 실험·수집 조건 |
 | `scripts/visualize_csi.py` | RX별 waterfall PNG |
+| `model_train/preprocessing/preprocess_3rx.py` | 공식 3-RX 전처리 구현 (`model_train/docs/[전처리]-설계.md` 기준) |
 | `model_train/<model-name>/` | 모델별 실험 단계 전처리·학습 코드 |
 | `model_train/docs/` | 전처리·모델 비교·설계·학습 문서 |
 
@@ -58,6 +60,8 @@ python3 scripts/measure_csi_hz.py \
   mac_collector_output/raw/YYYYMMDD/session_<id>
 python3 scripts/visualize_csi.py \
   --session-dir mac_collector_output/raw/YYYYMMDD/session_<id>
+python3 model_train/preprocessing/preprocess_3rx.py \
+  --raw-dir mac_collector_output/raw/YYYYMMDD
 ```
 
 Manual firmware build:

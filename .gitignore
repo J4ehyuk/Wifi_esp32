@@ -55,6 +55,9 @@ dist/
 mac_collector_output/
 mac_collector/flash_state.json
 
+# --- 전처리 산출물 (X/y npy, manifest — 세션당 수백 MB) ---
+model_train/preprocessing/output/
+
 # --- 로컬 질의응답 기록 (Git에 올리지 않음) ---
 doc/qa-log.md
 
